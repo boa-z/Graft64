@@ -3,13 +3,50 @@
   "type": "object",
   "required": ["schema_version", "app_version", "build_commit", "timestamp_utc", "device", "environment", "probes"],
   "properties": {
-    "schema_version": {"const": 2},
-    "app_version": {"type": "string"},
-    "build_commit": {"type": "string"},
-    "timestamp_utc": {"type": "string"},
-    "device": {"type": "object", "required": ["model", "system_name", "system_version", "machine", "page_size"]},
-    "environment": {"type": "object", "required": ["livecontainer_detected", "jit_expected"]},
-    "probes": {"type": "array", "items": {"type": "object", "required": ["id", "name", "status", "reason_code", "graft_error", "os_error", "duration_nanoseconds", "summary", "details_json"]}}
+    "schema_version": {"type": "integer", "const": 2},
+    "app_version": {"type": "string", "minLength": 1},
+    "build_commit": {"type": "string", "minLength": 1},
+    "timestamp_utc": {"type": "string", "minLength": 1},
+    "device": {
+      "type": "object",
+      "required": ["model", "system_name", "system_version", "machine", "page_size"],
+      "properties": {
+        "model": {"type": "string", "minLength": 1},
+        "system_name": {"type": "string", "minLength": 1},
+        "system_version": {"type": "string", "minLength": 1},
+        "machine": {"type": "string", "minLength": 1},
+        "page_size": {"type": "integer", "minimum": 1}
+      },
+      "additionalProperties": false
+    },
+    "environment": {
+      "type": "object",
+      "required": ["livecontainer_detected", "jit_expected"],
+      "properties": {
+        "livecontainer_detected": {"type": "boolean"},
+        "jit_expected": {"type": "boolean"}
+      },
+      "additionalProperties": false
+    },
+    "probes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "name", "status", "reason_code", "graft_error", "os_error", "duration_nanoseconds", "summary", "details_json"],
+        "properties": {
+          "id": {"type": "string", "minLength": 1},
+          "name": {"type": "string", "minLength": 1},
+          "status": {"type": "string", "enum": ["PASS", "FAIL", "SKIP", "BLOCKED"]},
+          "reason_code": {"type": "integer"},
+          "graft_error": {"type": "integer"},
+          "os_error": {"type": "integer"},
+          "duration_nanoseconds": {"type": "integer", "minimum": 0},
+          "summary": {"type": "string"},
+          "details_json": {"type": "string"}
+        },
+        "additionalProperties": false
+      }
+    }
   },
   "additionalProperties": false
 }

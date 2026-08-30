@@ -28,8 +28,11 @@ else
 fi
 file "$APP/GraftHost"
 otool -hv "$APP/GraftHost" | head -3
-for binary in "$APP/GraftProbeHelper" "$APP/GraftProbeTest.dylib"; do
-  file "$binary" | grep -q 'arm64' || { echo "expected arm64 Mach-O: $binary" >&2; exit 1; }
+for binary in "$APP/GraftHost" "$APP/GraftProbeHelper" "$APP/GraftProbeTest.dylib"; do
+  file -b "$binary" | grep -Eq 'Mach-O.*arm64' || {
+    echo "expected arm64 Mach-O: $binary" >&2
+    exit 1
+  }
 done
 shasum -a 256 "$APP/GraftHost" "$APP/GraftProbeHelper" "$APP/GraftProbeTest.dylib" "$APP/Info.plist" > "$OUT/package-manifest.sha256"
 printf '%s\n' "Package structure verified; entitlements are reported by codesign when a signed device build is supplied."
