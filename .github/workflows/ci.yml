@@ -10,6 +10,8 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: brew list shellcheck >/dev/null 2>&1 || brew install shellcheck
       - run: ./scripts/run-host-tests.sh
       - run: xcodebuild -project app/GraftHost/GraftHost.xcodeproj -target GraftHost -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build
   unsigned-device-ipa:
@@ -18,6 +20,8 @@ jobs:
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: brew list shellcheck >/dev/null 2>&1 || brew install shellcheck
       - name: Build iphoneos IPA without signing
         run: GRAFT_SDK=iphoneos GRAFT_CONFIGURATION=Release GRAFT_CODE_SIGNING_ALLOWED=NO ./scripts/build-probes.sh
       - name: Verify IPA structure
