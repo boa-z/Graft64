@@ -1,5 +1,10 @@
 name: graft64-ci
-on: [push, pull_request]
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+permissions:
+  contents: read
 jobs:
   host:
     runs-on: macos-14
@@ -7,3 +12,23 @@ jobs:
       - uses: actions/checkout@v4
       - run: ./scripts/run-host-tests.sh
       - run: xcodebuild -project app/GraftHost/GraftHost.xcodeproj -target GraftHost -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build
+  unsigned-device-ipa:
+    name: Build unsigned device IPA
+    if: github.event_name != 'pull_request'
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build iphoneos IPA without signing
+        run: GRAFT_SDK=iphoneos GRAFT_CONFIGURATION=Release GRAFT_CODE_SIGNING_ALLOWED=NO ./scripts/build-probes.sh
+      - name: Verify IPA structure
+        run: ./scripts/verify-package.sh
+      - name: Upload unsigned IPA
+        uses: actions/upload-artifact@v4
+        with:
+          name: GraftHost-unsigned-iphoneos
+          path: |
+            out/GraftHost.ipa
+            out/GraftHost.ipa.sha256
+            out/package-manifest.sha256
+            out/entitlements.plist
+          if-no-files-found: error
