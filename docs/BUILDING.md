@@ -30,4 +30,4 @@ On Apple Silicon with an ARM64 Docker engine, build the pinned builder image and
 GRAFT_RUNTIME_USE_CONTAINER=1 ./scripts/build-runtime-linux-arm64.sh
 ```
 
-The script refuses to run a formal build on x86-64 or macOS directly. It records configure/build logs under `out/runtime-linux-arm64/logs`, installs into `out/runtime-linux-arm64/root`, and writes `runtime-manifest.sha256`. G1 is a baseline only; no iOS runtime artifact is produced by this path.
+The script refuses to run a formal build on x86-64 or macOS directly. It records configure/build logs under `out/runtime-linux-arm64/logs`, installs into `out/runtime-linux-arm64/root`, and writes both `runtime-manifest.sha256` and the schema-checked `runtime-manifest.json`. G1 is a baseline only; no iOS runtime artifact is produced by this path.

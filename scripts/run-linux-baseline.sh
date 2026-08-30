@@ -38,4 +38,19 @@ run_sample() {
 
 run_sample hello-arm64 GRAFT64_HELLO_ARM64
 run_sample hello-amd64 GRAFT64_HELLO_AMD64
+python3 - "$RUNTIME/g1-baseline-tests.json" <<'PY'
+import json
+import sys
+
+tests = [
+    {"name": "hello-arm64", "status": "PASS", "log": "logs/hello-arm64.log"},
+    {"name": "hello-amd64", "status": "PASS", "log": "logs/hello-amd64.log"},
+]
+with open(sys.argv[1], "w", encoding="utf-8") as stream:
+    json.dump(tests, stream, indent=2)
+    stream.write("\n")
+PY
+python3 "$ROOT/scripts/generate-runtime-manifest.py" "$RUNTIME" \
+  --lock "$ROOT/third_party/manifest/deps.lock" \
+  --test-report "$RUNTIME/g1-baseline-tests.json"
 printf '%s\n' "G1 Linux ARM64 baseline passed; logs and sample hashes are under $RUNTIME"

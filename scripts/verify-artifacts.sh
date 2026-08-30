@@ -34,5 +34,23 @@ fi
 
 test -d "$OUT/root" || { echo "runtime root missing: $OUT/root" >&2; exit 1; }
 test -s "$OUT/runtime-manifest.sha256" || { echo "runtime manifest missing or empty: $OUT/runtime-manifest.sha256" >&2; exit 1; }
+test -s "$OUT/runtime-manifest.json" || { echo "JSON runtime manifest missing or empty: $OUT/runtime-manifest.json" >&2; exit 1; }
+python3 - "$OUT/runtime-manifest.json" <<'PY'
+import json
+import re
+import sys
+
+manifest = json.load(open(sys.argv[1], encoding="utf-8"))
+if manifest.get("schema_version") != 1 or manifest.get("stage") not in {"G1", "G2", "G3"}:
+    raise SystemExit("runtime manifest has an invalid schema_version or stage")
+if manifest.get("platform") != {"os": "linux", "architecture": "aarch64"}:
+    raise SystemExit("runtime manifest platform must be linux/aarch64")
+for artifact in manifest.get("artifacts", []):
+    if not re.fullmatch(r"[0-9a-f]{64}", artifact.get("sha256", "")):
+        raise SystemExit(f"invalid artifact hash: {artifact.get('path')}")
+for test in manifest.get("tests", []):
+    if test.get("status") not in {"PASS", "FAIL", "BLOCKED", "UNVERIFIED"}:
+        raise SystemExit(f"invalid test status: {test.get('name')}")
+PY
 grep -q '/bin/wine$' "$OUT/runtime-manifest.sha256" || { echo "runtime manifest does not contain bin/wine" >&2; exit 1; }
 printf '%s\n' "Runtime artifact structure verified: $OUT"

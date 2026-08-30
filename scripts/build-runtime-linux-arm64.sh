@@ -104,5 +104,7 @@ test -x "$PREFIX/bin/wine" || die "Wine install completed without $PREFIX/bin/wi
 find "$PREFIX" -type f -print | sort | while IFS= read -r file; do
   shasum -a 256 "$file"
 done > "$OUT/runtime-manifest.sha256"
+python3 "$ROOT/scripts/generate-runtime-manifest.py" "$OUT" \
+  --lock "$ROOT/third_party/manifest/deps.lock"
 "$ROOT/scripts/verify-artifacts.sh" "$OUT"
 printf '%s\n' "G1 runtime build completed under $OUT"
