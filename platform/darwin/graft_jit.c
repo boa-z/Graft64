@@ -6,6 +6,7 @@
 
 #if defined(__APPLE__)
 #include <pthread.h>
+#include <TargetConditionals.h>
 #ifndef MAP_JIT
 #define MAP_JIT 0x800
 #endif
@@ -33,7 +34,7 @@ int graft_jit_alloc(size_t size, graft_jit_region *out_region) {
 
 int graft_jit_begin_write(graft_jit_region *region) {
     if (!region || !region->base) { errno = EINVAL; return -1; }
-#if defined(__APPLE__)
+#if defined(__APPLE__) && !TARGET_OS_IPHONE
     pthread_jit_write_protect_np(0);
 #endif
     return mprotect(region->base, region->size, PROT_READ | PROT_WRITE);
@@ -42,7 +43,7 @@ int graft_jit_begin_write(graft_jit_region *region) {
 int graft_jit_end_write(graft_jit_region *region) {
     if (!region || !region->base) { errno = EINVAL; return -1; }
     int result = mprotect(region->base, region->size, PROT_READ | PROT_EXEC);
-#if defined(__APPLE__)
+#if defined(__APPLE__) && !TARGET_OS_IPHONE
     pthread_jit_write_protect_np(1);
 #endif
     return result;

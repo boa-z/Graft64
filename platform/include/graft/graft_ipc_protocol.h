@@ -28,6 +28,12 @@ typedef struct graft_msg_header {
     uint64_t request_id;
 } graft_msg_header;
 
+typedef struct graft_helper_hello_payload {
+    int64_t pid;
+    uint64_t page_size;
+    uint64_t nonce;
+} graft_helper_hello_payload;
+
 int graft_ipc_encode_header(const graft_msg_header *header,
                             uint8_t out[sizeof(graft_msg_header)]);
 int graft_ipc_decode_header(const uint8_t bytes[sizeof(graft_msg_header)],

@@ -1,5 +1,6 @@
 out/
 DerivedData/
+app/GraftHost/build/
 *.xcuserstate
 *.ipa
 *.dSYM/

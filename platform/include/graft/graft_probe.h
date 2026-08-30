@@ -32,6 +32,8 @@ int graft_run_probe(const char *name,
 int graft_run_all_probes(graft_probe_callback callback,
                          void *context);
 const char *graft_probe_status_name(graft_probe_status status);
+int graft_configure_helper(const char *path);
+int graft_configure_dylib(const char *path);
 
 #ifdef __cplusplus
 }

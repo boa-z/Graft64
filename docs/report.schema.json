@@ -1,0 +1,15 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "type": "object",
+  "required": ["schema_version", "app_version", "build_commit", "timestamp_utc", "device", "environment", "probes"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "app_version": {"type": "string"},
+    "build_commit": {"type": "string"},
+    "timestamp_utc": {"type": "string"},
+    "device": {"type": "object", "required": ["model", "system_name", "system_version", "machine", "page_size"]},
+    "environment": {"type": "object", "required": ["livecontainer_detected", "jit_expected"]},
+    "probes": {"type": "array", "items": {"type": "object", "required": ["id", "name", "status", "system_error", "duration_nanoseconds", "summary", "details_json"]}}
+  },
+  "additionalProperties": false
+}

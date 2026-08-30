@@ -9,6 +9,15 @@ final class ProbeStore {
     private(set) var lastExportURL: URL?
     var logText = "Ready. JIT probes require a device with JIT enabled by the host."
 
+    init() {
+        if let helperURL = Bundle.main.url(forResource: "GraftProbeHelper", withExtension: nil) {
+            _ = graft_configure_helper(helperURL.path)
+        }
+        if let dylibURL = Bundle.main.url(forResource: "GraftProbeTest", withExtension: "dylib") {
+            _ = graft_configure_dylib(dylibURL.path)
+        }
+    }
+
     var passCount: Int { results.count(where: { $0.status == .pass }) }
 
     func runAll() {
@@ -46,7 +55,7 @@ final class ProbeStore {
             let reportsURL = URL.documentsDirectory.appending(path: "Graft64/Reports", directoryHint: .isDirectory)
             try FileManager.default.createDirectory(at: reportsURL, withIntermediateDirectories: true)
             let stamp = ISO8601DateFormatter().string(from: report.timestampUTC).replacing("/", with: "-").replacing(":", with: "")
-            let url = reportsURL.appending(path: "(stamp)-(UIDevice.current.model).json")
+            let url = reportsURL.appending(path: "\(stamp)-\(UIDevice.current.model).json")
             try data.write(to: url, options: .atomic)
             lastExportURL = url
             logText += "\nExported report: \(url.path)"
