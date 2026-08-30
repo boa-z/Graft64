@@ -14,10 +14,10 @@ toolchain:
 dependencies:
   - name: wine
     repository: https://github.com/wine-mirror/wine.git
-    ref: wine-10.0
-    commit: 2e9cb99369e5ead9d7fe9836dcd43c05e42890bc
-    archive: https://github.com/wine-mirror/wine/archive/2e9cb99369e5ead9d7fe9836dcd43c05e42890bc.tar.gz
-    archive_sha256: 6f5bd070406ae658113beee97a30a7b4d327ff2cdb93f7478e4e670cdf6d08d3
+    ref: wine-11.0
+    commit: db11d0fe6a169c457e23d007e20404643d067aa8
+    archive: https://github.com/wine-mirror/wine/archive/db11d0fe6a169c457e23d007e20404643d067aa8.tar.gz
+    archive_sha256: 18aaee150ad540885b9706ae73ccf6febca904049de2792199a9dc18a2772e6a
     license: LGPL-2.1-or-later
     role: arm64x-arm64ec-wine
   - name: fex
