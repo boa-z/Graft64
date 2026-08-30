@@ -7,6 +7,7 @@
 #if defined(__APPLE__)
 #include <pthread.h>
 #include <TargetConditionals.h>
+#include <libkern/OSCacheControl.h>
 #ifndef MAP_JIT
 #define MAP_JIT 0x800
 #endif
@@ -53,8 +54,12 @@ int graft_jit_invalidate_icache(graft_jit_region *region, size_t offset, size_t 
     if (!region || !region->base || offset > region->size || size > region->size - offset) {
         errno = EINVAL; return -1;
     }
+#if defined(__APPLE__)
+    sys_icache_invalidate((char *)region->base + offset, size);
+#else
     __builtin___clear_cache((char *)region->base + offset,
                             (char *)region->base + offset + size);
+#endif
     return 0;
 }
 
