@@ -13,6 +13,11 @@ test -x "$APP/GraftProbeHelper" || { echo "helper missing or not executable" >&2
 test -f "$APP/GraftProbeTest.dylib" || { echo "test dylib missing" >&2; exit 1; }
 test -f "$APP/Info.plist" || { echo "Info.plist missing" >&2; exit 1; }
 plutil -lint "$APP/Info.plist" >/dev/null
+if codesign -d --entitlements :- "$APP" > "$OUT/entitlements.plist" 2>&1; then
+  printf '%s\n' "Signed entitlements extracted to $OUT/entitlements.plist"
+else
+  printf '%s\n' "UNSIGNED: codesign entitlements unavailable for this local build; supply a signed device IPA for final entitlement verification." > "$OUT/entitlements.plist"
+fi
 file "$APP/GraftHost"
 otool -hv "$APP/GraftHost" | head -3
 for binary in "$APP/GraftProbeHelper" "$APP/GraftProbeTest.dylib"; do
