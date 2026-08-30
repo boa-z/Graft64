@@ -21,9 +21,13 @@
     },
     "environment": {
       "type": "object",
-      "required": ["livecontainer_detected", "jit_expected"],
+      "required": ["livecontainer_detected", "livecontainer_evidence", "jit_expected"],
       "properties": {
         "livecontainer_detected": {"type": "boolean"},
+        "livecontainer_evidence": {
+          "type": "array",
+          "items": {"type": "string", "minLength": 1}
+        },
         "jit_expected": {"type": "boolean"}
       },
       "additionalProperties": false

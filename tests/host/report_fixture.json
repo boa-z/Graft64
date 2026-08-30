@@ -12,6 +12,7 @@
   },
   "environment": {
     "livecontainer_detected": false,
+    "livecontainer_evidence": [],
     "jit_expected": true
   },
   "probes": [

@@ -58,9 +58,11 @@ struct DeviceReport: Codable {
     }
     struct Environment: Codable {
         let livecontainerDetected: Bool
+        let livecontainerEvidence: [String]
         let jitExpected: Bool
         enum CodingKeys: String, CodingKey {
             case livecontainerDetected = "livecontainer_detected"
+            case livecontainerEvidence = "livecontainer_evidence"
             case jitExpected = "jit_expected"
         }
     }

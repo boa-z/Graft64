@@ -10,14 +10,23 @@ final class ProbeStore {
     private(set) var jitStatus: GraftJITStatus = .unknown
     var logText = "Ready. JIT probes require a device with JIT enabled by the host."
     private var backgroundObserved = false
+    private let liveContainerEvidence: [String]
 
     init() {
+        let environment = ProcessInfo.processInfo.environment
+        liveContainerEvidence = ["LC_HOME_PATH", "LP_HOME_PATH"]
+            .filter { environment[$0] != nil }
+            .map { "environment:\($0)" }
         let bundleRoot = Bundle.main.bundleURL.path
         let runtimeRoot = bundleRoot
         let dataRoot = URL.documentsDirectory.appending(path: "Graft64", directoryHint: .isDirectory).path
         let cacheRoot = URL.cachesDirectory.appending(path: "Graft64", directoryHint: .isDirectory).path
-        try? FileManager.default.createDirectory(atPath: dataRoot, withIntermediateDirectories: true)
-        try? FileManager.default.createDirectory(atPath: cacheRoot, withIntermediateDirectories: true)
+        do {
+            try FileManager.default.createDirectory(atPath: dataRoot, withIntermediateDirectories: true)
+            try FileManager.default.createDirectory(atPath: cacheRoot, withIntermediateDirectories: true)
+        } catch {
+            logText += "\nRuntime directory setup failed: \(error.localizedDescription)"
+        }
         bundleRoot.withCString { guest in
             runtimeRoot.withCString { runtime in
                 dataRoot.withCString { data in
@@ -91,8 +100,8 @@ final class ProbeStore {
             appVersion: AppInfo.version,
             buildCommit: AppInfo.commit,
             timestampUTC: .now,
-            device: .init(model: UIDevice.current.model, systemName: UIDevice.current.systemName, systemVersion: UIDevice.current.systemVersion, machine: ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? "arm64-device", pageSize: Int(getpagesize())),
-            environment: .init(livecontainerDetected: results.contains(where: { $0.detailsJSON.localizedStandardContains("LiveContainer") }), jitExpected: true),
+            device: .init(model: UIDevice.current.model, systemName: UIDevice.current.systemName, systemVersion: UIDevice.current.systemVersion, machine: Self.machineIdentifier, pageSize: Int(getpagesize())),
+            environment: .init(livecontainerDetected: !liveContainerEvidence.isEmpty, livecontainerEvidence: liveContainerEvidence, jitExpected: true),
             probes: results
         )
         do {
@@ -132,5 +141,16 @@ final class ProbeStore {
             results.append(updated)
         }
         logText += "\n\(status.rawValue) \(name): \(summary)"
+    }
+
+    private static var machineIdentifier: String {
+        if let simulator = ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] {
+            return simulator
+        }
+        var systemInfo = utsname()
+        guard uname(&systemInfo) == 0 else { return "unknown" }
+        return withUnsafeBytes(of: &systemInfo.machine) { bytes in
+            String(decoding: bytes.prefix { $0 != 0 }, as: UTF8.self)
+        }
     }
 }
