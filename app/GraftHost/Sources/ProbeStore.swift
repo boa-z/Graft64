@@ -18,7 +18,7 @@ final class ProbeStore {
         }
     }
 
-    var passCount: Int { results.count(where: { $0.status == .pass }) }
+    var passCount: Int { results.filter { $0.status == .pass }.count }
 
     func runAll() {
         guard !isRunning else { return }
