@@ -5,10 +5,12 @@ OUT="$ROOT/out"
 SDK_NAME="${GRAFT_SDK:-iphonesimulator}"
 CONFIGURATION="${GRAFT_CONFIGURATION:-Debug}"
 CODE_SIGNING_ALLOWED="${GRAFT_CODE_SIGNING_ALLOWED:-NO}"
+BUILD_COMMIT="${GRAFT_BUILD_COMMIT:-$(git -C "$ROOT" rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown')}"
 mkdir -p "$OUT"
 "$ROOT/scripts/bootstrap-macos.sh"
 xcodebuild -project "$ROOT/app/GraftHost/GraftHost.xcodeproj" -target GraftHost -sdk "$SDK_NAME" -configuration "$CONFIGURATION" \
-  CODE_SIGNING_ALLOWED="$CODE_SIGNING_ALLOWED" ONLY_ACTIVE_ARCH=NO SYMROOT="$OUT/build" OBJROOT="$OUT/obj" build
+  CODE_SIGNING_ALLOWED="$CODE_SIGNING_ALLOWED" GRAFT_BUILD_COMMIT="$BUILD_COMMIT" \
+  ONLY_ACTIVE_ARCH=NO SYMROOT="$OUT/build" OBJROOT="$OUT/obj" build
 APP="$OUT/build/${CONFIGURATION}-${SDK_NAME}/GraftHost.app"
 test -d "$APP" || { echo "built app not found: $APP" >&2; exit 1; }
 rm -rf "$OUT/Payload"

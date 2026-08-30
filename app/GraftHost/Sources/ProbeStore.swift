@@ -7,6 +7,7 @@ final class ProbeStore {
     private(set) var results: [ProbeResultModel] = []
     private(set) var isRunning = false
     private(set) var lastExportURL: URL?
+    private(set) var jitStatus: GraftJITStatus = .unknown
     var logText = "Ready. JIT probes require a device with JIT enabled by the host."
     private var backgroundObserved = false
 
@@ -20,6 +21,17 @@ final class ProbeStore {
     }
 
     var passCount: Int { results.filter { $0.status == .pass }.count }
+
+    func refreshJITStatus() {
+        let status = graft_jit_check()
+        jitStatus = switch status {
+        case GRAFT_JIT_STATUS_ENABLED: .enabled
+        case GRAFT_JIT_STATUS_DISABLED: .disabled
+        case GRAFT_JIT_STATUS_UNAVAILABLE: .unavailable
+        default: .unknown
+        }
+        logText += "\nJIT status: \(jitStatus.title)"
+    }
 
     func runAll() {
         guard !isRunning else { return }
@@ -57,8 +69,8 @@ final class ProbeStore {
     func exportReport() {
         let report = DeviceReport(
             schemaVersion: 1,
-            appVersion: Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.1",
-            buildCommit: Bundle.main.object(forInfoDictionaryKey: "GRAFT_BUILD_COMMIT") as? String ?? "unavailable",
+            appVersion: AppInfo.version,
+            buildCommit: AppInfo.commit,
             timestampUTC: .now,
             device: .init(model: UIDevice.current.model, systemName: UIDevice.current.systemName, systemVersion: UIDevice.current.systemVersion, machine: ProcessInfo.processInfo.environment["SIMULATOR_MODEL_IDENTIFIER"] ?? "arm64-device", pageSize: Int(getpagesize())),
             environment: .init(livecontainerDetected: results.contains(where: { $0.detailsJSON.localizedStandardContains("LiveContainer") }), jitExpected: true),

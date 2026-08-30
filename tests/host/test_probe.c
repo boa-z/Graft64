@@ -1,6 +1,8 @@
 #include "graft/graft_probe.h"
+#include "graft/graft_jit.h"
 #include <assert.h>
 #include <stdio.h>
+#include <string.h>
 
 static int count;
 static int helper_passed;
@@ -15,6 +17,10 @@ static void collect(const graft_probe_result *result, void *context) {
 
 int main(int argc, char **argv) {
     assert(argc == 3);
+    assert(strcmp(graft_jit_status_name(GRAFT_JIT_STATUS_UNKNOWN), "unknown") == 0);
+    assert(strcmp(graft_jit_status_name(GRAFT_JIT_STATUS_ENABLED), "enabled") == 0);
+    assert(strcmp(graft_jit_status_name(GRAFT_JIT_STATUS_DISABLED), "disabled") == 0);
+    assert(strcmp(graft_jit_status_name(GRAFT_JIT_STATUS_UNAVAILABLE), "unavailable") == 0);
     assert(graft_configure_helper(argv[1]) == 0);
     assert(graft_configure_dylib(argv[2]) == 0);
     assert(graft_run_all_probes(collect, NULL) == 0);

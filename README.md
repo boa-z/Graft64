@@ -18,4 +18,6 @@ The build SDK is configurable without editing scripts: `GRAFT_SDK=iphoneos GRAFT
 
 Install the resulting app in LiveContainer with JIT enabled externally (for example via StikDebug), run probes individually or with **Run All**, then export the JSON report from `Documents/Graft64/Reports`. This repository does not claim device success until such a report is available.
 
+The Environment section shows a lightweight JIT availability status. It observes the public `CS_DEBUGGED` process flag and whether a `MAP_JIT` region can be allocated; it does not replace the executable `jit_basic`/`jit_write_protect` probes. Use **Settings** to control the automatic lifecycle probe and to view the app version, build number, and source commit embedded by `build-probes.sh`.
+
 Wine and FEX are intentionally not included in GRAFT-0001.

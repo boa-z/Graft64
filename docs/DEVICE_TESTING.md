@@ -1,10 +1,12 @@
 # Device testing
 
 1. Build and sign with Xcode for an arm64 iOS 17.4+ device.
-2. Import the IPA into LiveContainer; enable JIT with the host tooling (StikDebug is external and not bundled).
+2. Import the IPA into LiveContainer; enable JIT with the host tooling (StikDebug is external and not bundled). The Environment section reports lightweight JIT availability by observing the public `CS_DEBUGGED` flag and testing `MAP_JIT` allocation; the executable probes provide stronger evidence.
 3. Run `runtime_paths`, `page_model`, `jit_basic`, `jit_write_protect`, `jit_multithread`, `unix_socket`, and `shared_mapping`.
 4. Run `signal_resume`, `dlopen_bundle`, `helper_spawn`, and `helper_ipc`. To validate lifecycle JIT, send GraftHost to the background and return to the foreground; the app automatically reruns `lifecycle_jit` and replaces its earlier manual `SKIP` result.
 5. Export JSON and attach it to the device test record. Never include UDID, pairing records, signing private data, or user file contents.
+
+The Settings screen contains the automatic lifecycle probe toggle and displays the embedded app version, build number, and source commit. The commit is supplied at build time by `scripts/build-probes.sh`; a direct Xcode build without that override reports `unknown`.
 
 ## LiveContainer mapping diagnostics
 

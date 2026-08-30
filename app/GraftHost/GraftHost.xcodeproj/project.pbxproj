@@ -8,6 +8,9 @@
 
 /* Begin PBXBuildFile section */
 		3001B593F94EB1CB3F600AB0 /* ProbeModels.swift in Sources */ = {isa = PBXBuildFile; fileRef = 1E58B9358634E878ABACC506 /* ProbeModels.swift */; };
+		3A8C5D1E2B7F4C6D9E0A1122 /* AppInfo.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A8C5D1E2B7F4C6D9E0A1121 /* AppInfo.swift */; };
+		3A8C5D1E2B7F4C6D9E0A1124 /* AppSettingsView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A8C5D1E2B7F4C6D9E0A1123 /* AppSettingsView.swift */; };
+		3A8C5D1E2B7F4C6D9E0A1126 /* JITStatusView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3A8C5D1E2B7F4C6D9E0A1125 /* JITStatusView.swift */; };
 		431CB18F84E4AAA1FA72AF05 /* Foundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 1DA78BF151BBF47381C4D1B6 /* Foundation.framework */; };
 		45292CB4C473DB2E587D0B5F /* graft_process.c in Sources */ = {isa = PBXBuildFile; fileRef = 3453FCC9BC98562C4F277534 /* graft_process.c */; };
 		771476531F63007C21D723B1 /* ProbeStore.swift in Sources */ = {isa = PBXBuildFile; fileRef = 3488D90363F3B3BB4BAC9A7D /* ProbeStore.swift */; };
@@ -25,6 +28,9 @@
 		014ED637982D9E3F4330C149 /* ProbeRow.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProbeRow.swift; sourceTree = "<group>"; };
 		1DA78BF151BBF47381C4D1B6 /* Foundation.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = Foundation.framework; path = System/Library/Frameworks/Foundation.framework; sourceTree = SDKROOT; };
 		1E58B9358634E878ABACC506 /* ProbeModels.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProbeModels.swift; sourceTree = "<group>"; };
+		3A8C5D1E2B7F4C6D9E0A1121 /* AppInfo.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppInfo.swift; sourceTree = "<group>"; };
+		3A8C5D1E2B7F4C6D9E0A1123 /* AppSettingsView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = AppSettingsView.swift; sourceTree = "<group>"; };
+		3A8C5D1E2B7F4C6D9E0A1125 /* JITStatusView.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = JITStatusView.swift; sourceTree = "<group>"; };
 		3453FCC9BC98562C4F277534 /* graft_process.c */ = {isa = PBXFileReference; includeInIndex = 1; path = graft_process.c; sourceTree = "<group>"; };
 		3488D90363F3B3BB4BAC9A7D /* ProbeStore.swift */ = {isa = PBXFileReference; includeInIndex = 1; lastKnownFileType = sourcecode.swift; path = ProbeStore.swift; sourceTree = "<group>"; };
 		357957F8CC568E1E18E21F48 /* graft_jit.c */ = {isa = PBXFileReference; includeInIndex = 1; path = graft_jit.c; sourceTree = "<group>"; };
@@ -87,8 +93,11 @@
 		95308ADE8C857E5808F41D77 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				3A8C5D1E2B7F4C6D9E0A1121 /* AppInfo.swift */,
+				3A8C5D1E2B7F4C6D9E0A1123 /* AppSettingsView.swift */,
 				C2C910AFC83ACBB715775D60 /* ContentView.swift */,
 				5D7CF7CCEAEF2A9F68BAC0DE /* GraftHostApp.swift */,
+				3A8C5D1E2B7F4C6D9E0A1125 /* JITStatusView.swift */,
 				1E58B9358634E878ABACC506 /* ProbeModels.swift */,
 				014ED637982D9E3F4330C149 /* ProbeRow.swift */,
 				3488D90363F3B3BB4BAC9A7D /* ProbeStore.swift */,
@@ -190,7 +199,10 @@
 			buildActionMask = 2147483647;
 			files = (
 				EAB7941665AC8BD3BFFFF9B4 /* ContentView.swift in Sources */,
+				3A8C5D1E2B7F4C6D9E0A1122 /* AppInfo.swift in Sources */,
+				3A8C5D1E2B7F4C6D9E0A1124 /* AppSettingsView.swift in Sources */,
 				9DCBAF2347814A1F9D70662E /* GraftHostApp.swift in Sources */,
+				3A8C5D1E2B7F4C6D9E0A1126 /* JITStatusView.swift in Sources */,
 				3001B593F94EB1CB3F600AB0 /* ProbeModels.swift in Sources */,
 				EDE252064DFE394FB1F2C518 /* ProbeRow.swift in Sources */,
 				771476531F63007C21D723B1 /* ProbeStore.swift in Sources */,
@@ -216,6 +228,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/GraftHost.entitlements;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../platform/include";
 				INFOPLIST_FILE = Resources/Info.plist;
+				GRAFT_BUILD_COMMIT = unknown;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = org.graft64.GraftHost;
@@ -352,6 +365,7 @@
 				CODE_SIGN_ENTITLEMENTS = Resources/GraftHost.entitlements;
 				HEADER_SEARCH_PATHS = "$(SRCROOT)/../../platform/include";
 				INFOPLIST_FILE = Resources/Info.plist;
+				GRAFT_BUILD_COMMIT = unknown;
 				IPHONEOS_DEPLOYMENT_TARGET = 17.4;
 				LD_RUNPATH_SEARCH_PATHS = "$(inherited) @executable_path/Frameworks";
 				PRODUCT_BUNDLE_IDENTIFIER = org.graft64.GraftHost;
