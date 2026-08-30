@@ -521,32 +521,47 @@ static int dlopen_bundle(char *summary, size_t ss, char *details, size_t ds) {
     set_text(summary, ss, "Loaded and called bundled dylib"); set_text(details, ds, "{\"path\":\"%s\",\"return_value\":64}", g_dylib_path); return 0;
 #endif
 }
-static int unix_socket_probe(char *summary, size_t ss, char *details, size_t ds) { int fds[2]; if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) return errno; const char msg[] = "graft64"; char out[sizeof(msg)] = {0}; ssize_t w = write(fds[0], msg, sizeof(msg)); ssize_t r = read(fds[1], out, sizeof(out)); close(fds[0]); close(fds[1]); set_text(summary, ss, "Unix socketpair round trip completed"); set_text(details, ds, "{\"written\":%zd,\"read\":%zd}", w, r); return (w == (ssize_t)sizeof(msg) && r == (ssize_t)sizeof(msg) && memcmp(msg, out, sizeof(msg)) == 0) ? 0 : EIO; }
-static int shared_mapping(char *summary, size_t ss, char *details, size_t ds) {
-    char path[PATH_MAX];
-    const char *shared_dir = (g_cache_root[0] && access(g_cache_root, W_OK) == 0) ? g_cache_root : "/tmp";
-    if (snprintf(path, sizeof(path), "%s/.graft64-shm-XXXXXX", shared_dir) >= (int)sizeof(path)) {
-        errno = ENAMETOOLONG;
-        set_text(summary, ss, "Shared mapping path is too long");
-        set_text(details, ds, "{\"stage\":\"shared_path\",\"os_error\":%d}", errno);
-        return errno;
+static int unix_socket_probe(char *summary, size_t ss, char *details, size_t ds) {
+    int fds[2];
+    if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) return errno;
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    uint64_t deadline_ms = (uint64_t)now.tv_sec * 1000u +
+                           (uint64_t)now.tv_nsec / 1000000u + 2000u;
+    const char request[] = "graft64-request";
+    const char response[] = "graft64-response";
+    char request_out[sizeof(request)] = {0};
+    char response_out[sizeof(response)] = {0};
+    int request_ok = write_full_deadline(fds[0], request, sizeof(request), deadline_ms) == 0 &&
+                     read_full_deadline(fds[1], request_out, sizeof(request_out), deadline_ms) == 0 &&
+                     memcmp(request, request_out, sizeof(request)) == 0;
+    int response_ok = request_ok &&
+                      write_full_deadline(fds[1], response, sizeof(response), deadline_ms) == 0 &&
+                      read_full_deadline(fds[0], response_out, sizeof(response_out), deadline_ms) == 0 &&
+                      memcmp(response, response_out, sizeof(response)) == 0;
+    int close_ok = 0;
+    if (response_ok && shutdown(fds[0], SHUT_WR) == 0) {
+        struct pollfd pfd = {.fd = fds[1], .events = POLLIN};
+        int poll_result = poll(&pfd, 1, 2000);
+        unsigned char byte = 0;
+        close_ok = poll_result == 1 && (pfd.revents & (POLLIN | POLLHUP)) &&
+                   read(fds[1], &byte, 1) == 0;
     }
-    int fd = mkstemp(path);
-    if (fd < 0) { int e = errno; set_text(summary, ss, "Shared mapping file creation failed"); set_text(details, ds, "{\"stage\":\"mkstemp\",\"os_error\":%d}", e); return e; }
-    unlink(path);
-    if (ftruncate(fd, 4096) != 0) { int e = errno; close(fd); set_text(summary, ss, "Shared mapping resize failed"); set_text(details, ds, "{\"stage\":\"ftruncate\",\"os_error\":%d}", e); return e; }
-    unsigned char *m = mmap(NULL, 4096, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
-    int map_error = errno;
-    close(fd);
-    if (m == MAP_FAILED) { set_text(summary, ss, "Shared mapping failed"); set_text(details, ds, "{\"stage\":\"mmap\",\"os_error\":%d}", map_error); return map_error; }
-    m[0] = 0xA5;
-    int ok = m[0] == 0xA5;
-    munmap(m, 4096);
-    set_text(summary, ss, ok ? "File-backed shared mapping completed" : "Shared mapping round trip failed");
-    set_text(details, ds, "{\"bytes\":4096,\"round_trip\":%s,\"shared_path_root\":\"%s\"}", ok ? "true" : "false", shared_dir);
+    close(fds[0]); close(fds[1]);
+    int ok = request_ok && response_ok && close_ok;
+    set_text(summary, ss, ok ? "Bidirectional Unix socket and close handling completed" : "Unix socket round trip failed");
+    set_text(details, ds, "{\"bidirectional\":%s,\"request_bytes\":%zu,\"response_bytes\":%zu,\"deadline_ms\":2000,\"peer_close_observed\":%s}", request_ok && response_ok ? "true" : "false", sizeof(request), sizeof(response), close_ok ? "true" : "false");
     return ok ? 0 : EIO;
 }
-static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) {
+
+typedef enum helper_probe_mode {
+    HELPER_PROBE_SPAWN,
+    HELPER_PROBE_SHARED,
+    HELPER_PROBE_IPC,
+} helper_probe_mode;
+
+static int helper_roundtrip(helper_probe_mode mode, char *summary, size_t ss,
+                            char *details, size_t ds) {
     if (!g_helper_path[0]) { set_text(summary, ss, "Bundled helper path is not configured"); set_text(details, ds, "{\"status\":\"unverified\",\"next_step\":\"Configure helper path from app bundle\"}"); return PROBE_INTERNAL_SKIP; }
     int fds[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) { int e = errno; set_text(summary, ss, "Helper socketpair failed"); set_text(details, ds, "{\"stage\":\"socketpair\",\"os_error\":%d}", e); return e; }
@@ -581,19 +596,22 @@ static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) 
     close(fds[1]);
     if (spawn_result != 0) { munmap(shared, shared_size); close(shared_fd); close(fds[0]); errno = spawn_error; set_text(summary, ss, "Helper process spawn failed"); set_text(details, ds, "{\"stage\":\"host_adapter\",\"os_error\":%d}", spawn_error); return spawn_error; }
     pid_t pid = (pid_t)process.pid;
-    graft_msg_header requests[] = {
-        {GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_HELLO, 0, 1},
-        {GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_PING, 0, 2},
-        {GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_SHARED_MEMORY, 0, 3},
-        {GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_PING, 0, 4},
-        {GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_SHUTDOWN, 0, 5},
-    };
+    graft_msg_header requests[5] = {{0}};
+    size_t request_count = 0;
+    requests[request_count++] = (graft_msg_header){GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_HELLO, 0, 1};
+    if (mode == HELPER_PROBE_IPC)
+        requests[request_count++] = (graft_msg_header){GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_PING, 0, 2};
+    if (mode != HELPER_PROBE_SPAWN)
+        requests[request_count++] = (graft_msg_header){GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_SHARED_MEMORY, 0, 3};
+    if (mode == HELPER_PROBE_IPC)
+        requests[request_count++] = (graft_msg_header){GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_PING, 0, 4};
+    requests[request_count++] = (graft_msg_header){GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_SHUTDOWN, 0, 5};
     int ok = 1;
     graft_helper_hello_payload hello = {0};
     struct timespec deadline_clock;
     clock_gettime(CLOCK_MONOTONIC, &deadline_clock);
     const uint64_t deadline_ms = (uint64_t)deadline_clock.tv_sec * 1000u + (uint64_t)deadline_clock.tv_nsec / 1000000u + 10000u;
-    for (size_t i = 0; i < sizeof(requests) / sizeof(requests[0]); ++i) {
+    for (size_t i = 0; i < request_count; ++i) {
         if (write_full_deadline(fds[0], &requests[i], sizeof(requests[i]), deadline_ms) != 0) { ok = 0; break; }
         graft_msg_header response;
         if (read_full_deadline(fds[0], &response, sizeof(response), deadline_ms) != 0 || graft_ipc_validate_header(&response) != 0 || response.request_id != requests[i].request_id) { ok = 0; break; }
@@ -602,7 +620,7 @@ static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) 
         }
     }
     __sync_synchronize();
-    int shared_ok = shared->parent_magic == 0x4752414654504152ull && shared->helper_magic == 0x4752414654484c50ull && shared->helper_pid == (uint64_t)pid && shared->heartbeat >= 4;
+    int shared_ok = shared->parent_magic == 0x4752414654504152ull && shared->helper_magic == 0x4752414654484c50ull && shared->helper_pid == (uint64_t)pid && shared->heartbeat >= request_count;
     uint64_t heartbeat = shared->heartbeat;
     uint64_t helper_magic = shared->helper_magic;
     uint64_t helper_pid = shared->helper_pid;
@@ -619,11 +637,21 @@ static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) 
     }
     if (!wait_ok) { kill(pid, SIGKILL); while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {} }
     int exited_ok = wait_ok && WIFEXITED(status) && WEXITSTATUS(status) == 0;
-    set_text(summary, ss, ok && shared_ok && exited_ok ? "Persistent helper IPC and shared mapping completed" : "Helper IPC/shared mapping failed");
-    set_text(details, ds, "{\"spawned\":true,\"persistent_requests\":4,\"exit_code\":%d,\"wait_completed\":%s,\"pid\":%lld,\"page_size\":%llu,\"nonce_present\":%s,\"shared_round_trip\":%s,\"shared_path_root\":\"%s\",\"helper_magic\":%llu,\"shared_helper_pid\":%llu,\"heartbeat\":%llu}", wait_ok && WIFEXITED(status) ? WEXITSTATUS(status) : 128, wait_ok ? "true" : "false", (long long)hello.pid, (unsigned long long)hello.page_size, hello.nonce ? "true" : "false", shared_ok ? "true" : "false", shared_dir, (unsigned long long)helper_magic, (unsigned long long)helper_pid, (unsigned long long)heartbeat);
-    return ok && shared_ok && exited_ok && hello.pid > 0 && hello.page_size > 0 && hello.nonce != 0 ? 0 : EIO;
+    int require_shared = mode != HELPER_PROBE_SPAWN;
+    int result_ok = ok && exited_ok && hello.pid > 0 && hello.page_size > 0 &&
+                    hello.nonce != 0 && (!require_shared || shared_ok);
+    const char *mode_name = mode == HELPER_PROBE_SPAWN ? "spawn" :
+                            mode == HELPER_PROBE_SHARED ? "shared_mapping" : "ipc";
+    const char *success_summary = mode == HELPER_PROBE_SPAWN ? "Bundled helper spawned and exited cleanly" :
+                                  mode == HELPER_PROBE_SHARED ? "Cross-process shared mapping completed" :
+                                  "Persistent bidirectional helper IPC completed";
+    set_text(summary, ss, result_ok ? success_summary : "Helper process validation failed");
+    set_text(details, ds, "{\"mode\":\"%s\",\"spawned\":true,\"request_count\":%zu,\"persistent_requests\":%zu,\"exit_code\":%d,\"wait_completed\":%s,\"pid\":%lld,\"page_size\":%llu,\"nonce_present\":%s,\"shared_round_trip\":%s,\"mmap_flags\":\"MAP_SHARED\",\"shared_path_root\":\"%s\",\"helper_magic\":%llu,\"shared_helper_pid\":%llu,\"heartbeat\":%llu}", mode_name, request_count, request_count - 1u, wait_ok && WIFEXITED(status) ? WEXITSTATUS(status) : 128, wait_ok ? "true" : "false", (long long)hello.pid, (unsigned long long)hello.page_size, hello.nonce ? "true" : "false", shared_ok ? "true" : "false", shared_dir, (unsigned long long)helper_magic, (unsigned long long)helper_pid, (unsigned long long)heartbeat);
+    return result_ok ? 0 : EIO;
 }
-static int helper_probe(char *summary, size_t ss, char *details, size_t ds) { return helper_roundtrip(summary, ss, details, ds); }
+static int shared_mapping(char *summary, size_t ss, char *details, size_t ds) { return helper_roundtrip(HELPER_PROBE_SHARED, summary, ss, details, ds); }
+static int helper_spawn_probe(char *summary, size_t ss, char *details, size_t ds) { return helper_roundtrip(HELPER_PROBE_SPAWN, summary, ss, details, ds); }
+static int helper_ipc_probe(char *summary, size_t ss, char *details, size_t ds) { return helper_roundtrip(HELPER_PROBE_IPC, summary, ss, details, ds); }
 static int lifecycle_jit(char *summary, size_t ss, char *details, size_t ds) {
     if (!atomic_load_explicit(&g_lifecycle_background_seen, memory_order_acquire) ||
         !atomic_load_explicit(&g_lifecycle_foreground_seen, memory_order_acquire)) {
@@ -653,7 +681,7 @@ static int lifecycle_jit(char *summary, size_t ss, char *details, size_t ds) {
 }
 
 static const probe_entry probes[] = {
-    {"runtime_paths", runtime_paths}, {"page_model", page_model}, {"jit_basic", jit_basic}, {"jit_write_protect", jit_write_protect}, {"jit_multithread", jit_multithread}, {"signal_resume", signal_resume}, {"dlopen_bundle", dlopen_bundle}, {"unix_socket", unix_socket_probe}, {"shared_mapping", shared_mapping}, {"helper_spawn", helper_probe}, {"helper_ipc", helper_probe}, {"lifecycle_jit", lifecycle_jit},
+    {"runtime_paths", runtime_paths}, {"page_model", page_model}, {"jit_basic", jit_basic}, {"jit_write_protect", jit_write_protect}, {"jit_multithread", jit_multithread}, {"signal_resume", signal_resume}, {"dlopen_bundle", dlopen_bundle}, {"unix_socket", unix_socket_probe}, {"shared_mapping", shared_mapping}, {"helper_spawn", helper_spawn_probe}, {"helper_ipc", helper_ipc_probe}, {"lifecycle_jit", lifecycle_jit},
 };
 
 const char *graft_probe_status_name(graft_probe_status status) { switch (status) { case GRAFT_PROBE_PASS: return "PASS"; case GRAFT_PROBE_FAIL: return "FAIL"; case GRAFT_PROBE_SKIP: return "SKIP"; case GRAFT_PROBE_BLOCKED: return "BLOCKED"; default: return "UNKNOWN"; } }

@@ -35,12 +35,15 @@ int main(int argc, char **argv) {
         if (shared == MAP_FAILED) return 64;
     }
     const uint64_t helper_magic = 0x4752414654484c50ull;
+    uint64_t session_nonce = 0;
+    arc4random_buf(&session_nonce, sizeof(session_nonce));
+    if (session_nonce == 0) session_nonce = 1;
     for (;;) {
         graft_msg_header header;
         if (read_full(fd, &header, sizeof(header)) != 0 || graft_ipc_validate_header(&header) != 0) return 65;
         unsigned char payload[GRAFT_IPC_MAX_PAYLOAD];
         if (header.payload_size && read_full(fd, payload, header.payload_size) != 0) return 66;
-        graft_helper_hello_payload hello = {(int64_t)getpid(), (uint64_t)getpagesize(), ((uint64_t)getpid() << 32) ^ (uint64_t)time(NULL)};
+        graft_helper_hello_payload hello = {(int64_t)getpid(), (uint64_t)getpagesize(), session_nonce};
         if (shared) {
             shared->helper_magic = helper_magic;
             shared->helper_pid = (uint64_t)getpid();
