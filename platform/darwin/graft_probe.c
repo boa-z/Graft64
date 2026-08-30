@@ -43,6 +43,26 @@ typedef struct probe_entry { const char *name; probe_fn fn; } probe_entry;
 static void set_text(char *dst, size_t size, const char *fmt, ...) {
     va_list args; va_start(args, fmt); vsnprintf(dst, size, fmt, args); va_end(args);
 }
+static int write_full_fd(int fd, const void *buffer, size_t size) {
+    const unsigned char *bytes = (const unsigned char *)buffer;
+    while (size) {
+        ssize_t written = write(fd, bytes, size);
+        if (written <= 0) return -1;
+        bytes += (size_t)written;
+        size -= (size_t)written;
+    }
+    return 0;
+}
+static int read_full_fd(int fd, void *buffer, size_t size) {
+    unsigned char *bytes = (unsigned char *)buffer;
+    while (size) {
+        ssize_t read_count = read(fd, bytes, size);
+        if (read_count <= 0) return -1;
+        bytes += (size_t)read_count;
+        size -= (size_t)read_count;
+    }
+    return 0;
+}
 
 static int runtime_paths(char *summary, size_t ss, char *details, size_t ds) {
     char cwd[PATH_MAX] = {0}; if (!getcwd(cwd, sizeof(cwd))) snprintf(cwd, sizeof(cwd), "<error:%d>", errno);
@@ -176,7 +196,7 @@ static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) 
     posix_spawn_file_actions_t actions; posix_spawn_file_actions_init(&actions); posix_spawn_file_actions_adddup2(&actions, fds[1], child_fd); posix_spawn_file_actions_addclose(&actions, fds[0]); posix_spawn_file_actions_addclose(&actions, fds[1]);
     char fd_arg[] = "10"; char *const argv[] = {g_helper_path, fd_arg, NULL}; pid_t pid = 0; int spawn_rc = posix_spawn(&pid, g_helper_path, &actions, NULL, argv, environ); posix_spawn_file_actions_destroy(&actions); close(fds[1]); if (spawn_rc != 0) { close(fds[0]); errno = spawn_rc; return spawn_rc; }
     graft_msg_header requests[] = {{GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_HELLO, 0, 1}, {GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_PING, 0, 2}, {GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_SHUTDOWN, 0, 3}};
-    int ok = 1; graft_helper_hello_payload hello = {0}; for (size_t i = 0; i < 3; ++i) { if (write(fds[0], &requests[i], sizeof(requests[i])) != (ssize_t)sizeof(requests[i])) { ok = 0; break; } struct pollfd pfd = {.fd = fds[0], .events = POLLIN}; if (poll(&pfd, 1, 2000) != 1) { ok = 0; break; } graft_msg_header response; if (read(fds[0], &response, sizeof(response)) != (ssize_t)sizeof(response) || graft_ipc_validate_header(&response) != 0 || response.request_id != requests[i].request_id) { ok = 0; break; } if (response.payload_size) { if (response.payload_size != sizeof(hello) || read(fds[0], &hello, sizeof(hello)) != (ssize_t)sizeof(hello)) { ok = 0; break; } } }
+    int ok = 1; graft_helper_hello_payload hello = {0}; for (size_t i = 0; i < 3; ++i) { if (write_full_fd(fds[0], &requests[i], sizeof(requests[i])) != 0) { ok = 0; break; } struct pollfd pfd = {.fd = fds[0], .events = POLLIN}; if (poll(&pfd, 1, 2000) != 1) { ok = 0; break; } graft_msg_header response; if (read_full_fd(fds[0], &response, sizeof(response)) != 0 || graft_ipc_validate_header(&response) != 0 || response.request_id != requests[i].request_id) { ok = 0; break; } if (response.payload_size) { if (response.payload_size != sizeof(hello) || read_full_fd(fds[0], &hello, sizeof(hello)) != 0) { ok = 0; break; } } }
     close(fds[0]); int status = 0; waitpid(pid, &status, 0); set_text(summary, ss, ok && WIFEXITED(status) && WEXITSTATUS(status) == 0 ? "Helper IPC handshake completed" : "Helper IPC handshake failed"); set_text(details, ds, "{\"spawned\":true,\"exit_code\":%d,\"messages\":3,\"pid\":%lld,\"page_size\":%llu,\"nonce_present\":%s}", WIFEXITED(status) ? WEXITSTATUS(status) : 128, (long long)hello.pid, (unsigned long long)hello.page_size, hello.nonce ? "true" : "false"); return ok && WIFEXITED(status) && WEXITSTATUS(status) == 0 && hello.pid > 0 && hello.page_size > 0 && hello.nonce != 0 ? 0 : EIO;
 }
 static int helper_probe(char *summary, size_t ss, char *details, size_t ds) { return helper_roundtrip(summary, ss, details, ds); }
