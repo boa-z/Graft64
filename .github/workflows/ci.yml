@@ -13,7 +13,7 @@ jobs:
       - name: Install shellcheck
         run: brew list shellcheck >/dev/null 2>&1 || brew install shellcheck
       - run: ./scripts/run-host-tests.sh
-      - run: xcodebuild -project app/GraftHost/GraftHost.xcodeproj -target GraftHost -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build
+      - run: xcodebuild -project app/GraftHost/GraftHost.xcodeproj -target GraftHost -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=NO build
   unsigned-device-ipa:
     name: Build unsigned device IPA
     if: github.event_name != 'pull_request'
