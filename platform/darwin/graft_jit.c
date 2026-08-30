@@ -35,6 +35,12 @@ static size_t page_round(size_t size) {
 graft_jit_status graft_jit_check(void) {
 #if defined(__APPLE__)
 #if TARGET_OS_IPHONE
+    /* MAP_JIT uses per-thread W^X on iOS.  A successful mmap alone is not
+     * enough: without this facility callers cannot safely publish code. */
+    if (!pthread_jit_write_protect_supported_np()) {
+        errno = ENOTSUP;
+        return GRAFT_JIT_STATUS_UNAVAILABLE;
+    }
     if (graft_process_is_debugged()) return GRAFT_JIT_STATUS_ENABLED;
 #endif
     graft_jit_region region = {0};
@@ -98,11 +104,10 @@ int graft_jit_begin_write(graft_jit_region *region) {
 
 int graft_jit_commit(graft_jit_region *region) {
     if (!region || !region->base) { errno = EINVAL; return -1; }
-    int result = mprotect(region->base, region->size, PROT_READ | PROT_EXEC);
 #if defined(__APPLE__) && !TARGET_OS_IPHONE
     pthread_jit_write_protect_np(1);
 #endif
-    return result;
+    return mprotect(region->base, region->size, PROT_READ | PROT_EXEC);
 }
 
 int graft_jit_end_write(graft_jit_region *region) {
