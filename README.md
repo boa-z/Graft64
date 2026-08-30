@@ -12,7 +12,7 @@ Upstream-first Windows runtime for iOS. The repository currently delivers **GRAF
 
 `build-probes.sh` builds an unsigned simulator application for local compile validation when no signing identity is configured. To make an IPA for a device, provide an Xcode signing identity and provisioning profile through standard `xcodebuild` settings (the scripts never contain a Team ID or device identifier).
 
-The build SDK is configurable without editing scripts: `GRAFT_SDK=iphoneos GRAFT_CONFIGURATION=Release ./scripts/build-probes.sh`. The default remains `iphonesimulator` so CI can compile without a connected or provisioned device.
+The build SDK is configurable without editing scripts: `GRAFT_SDK=iphoneos GRAFT_CONFIGURATION=Release GRAFT_CODE_SIGNING_ALLOWED=YES GRAFT_CODE_SIGN_IDENTITY='Apple Development' ./scripts/build-probes.sh`. The default remains `iphonesimulator` with signing disabled so CI can compile without a connected or provisioned device; a real device build must use the project's provisioning profile and signing identity.
 
 ## Device evidence
 
