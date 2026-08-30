@@ -6,6 +6,15 @@ on:
 permissions:
   contents: read
 jobs:
+  g1-lock:
+    name: Validate G1 lock and scripts
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install shellcheck
+        run: sudo apt-get update && sudo apt-get install -y shellcheck
+      - run: ./scripts/verify-artifacts.sh
+      - run: shellcheck scripts/*.sh
   host:
     runs-on: macos-14
     steps:
