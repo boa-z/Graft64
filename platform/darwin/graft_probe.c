@@ -94,23 +94,37 @@ typedef struct probe_entry { const char *name; probe_fn fn; } probe_entry;
 static void set_text(char *dst, size_t size, const char *fmt, ...) {
     va_list args; va_start(args, fmt); vsnprintf(dst, size, fmt, args); va_end(args);
 }
-static int write_full_fd(int fd, const void *buffer, size_t size) {
-    const unsigned char *bytes = (const unsigned char *)buffer;
-    while (size) {
-        ssize_t written = write(fd, bytes, size);
-        if (written <= 0) return -1;
-        bytes += (size_t)written;
-        size -= (size_t)written;
+static int wait_fd_deadline(int fd, short events, uint64_t deadline_ms) {
+    struct timespec now;
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    uint64_t current = (uint64_t)now.tv_sec * 1000u + (uint64_t)now.tv_nsec / 1000000u;
+    if (current >= deadline_ms) { errno = ETIMEDOUT; return -1; }
+    int timeout = (int)(deadline_ms - current);
+    struct pollfd pfd = {.fd = fd, .events = events};
+    int rc = poll(&pfd, 1, timeout);
+    if (rc != 1 || (pfd.revents & (POLLERR | POLLNVAL)) ||
+        ((pfd.revents & POLLHUP) && !(pfd.revents & POLLIN))) {
+        errno = rc == 0 ? ETIMEDOUT : EPIPE; return -1;
     }
     return 0;
 }
-static int read_full_fd(int fd, void *buffer, size_t size) {
-    unsigned char *bytes = (unsigned char *)buffer;
+static int write_full_deadline(int fd, const void *buffer, size_t size, uint64_t deadline_ms) {
+    const unsigned char *bytes = buffer;
     while (size) {
-        ssize_t read_count = read(fd, bytes, size);
-        if (read_count <= 0) return -1;
-        bytes += (size_t)read_count;
-        size -= (size_t)read_count;
+        if (wait_fd_deadline(fd, POLLOUT, deadline_ms) != 0) return -1;
+        ssize_t n = write(fd, bytes, size);
+        if (n <= 0) { if (n < 0 && errno == EINTR) continue; return -1; }
+        bytes += (size_t)n; size -= (size_t)n;
+    }
+    return 0;
+}
+static int read_full_deadline(int fd, void *buffer, size_t size, uint64_t deadline_ms) {
+    unsigned char *bytes = buffer;
+    while (size) {
+        if (wait_fd_deadline(fd, POLLIN, deadline_ms) != 0) return -1;
+        ssize_t n = read(fd, bytes, size);
+        if (n <= 0) { if (n < 0 && errno == EINTR) continue; errno = EPIPE; return -1; }
+        bytes += (size_t)n; size -= (size_t)n;
     }
     return 0;
 }
@@ -354,15 +368,15 @@ static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) 
     };
     int ok = 1;
     graft_helper_hello_payload hello = {0};
+    struct timespec deadline_clock;
+    clock_gettime(CLOCK_MONOTONIC, &deadline_clock);
+    const uint64_t deadline_ms = (uint64_t)deadline_clock.tv_sec * 1000u + (uint64_t)deadline_clock.tv_nsec / 1000000u + 10000u;
     for (size_t i = 0; i < sizeof(requests) / sizeof(requests[0]); ++i) {
-        if (write_full_fd(fds[0], &requests[i], sizeof(requests[i])) != 0) { ok = 0; break; }
-        struct pollfd pfd = {.fd = fds[0], .events = POLLIN};
-        int poll_result = poll(&pfd, 1, 2000);
-        if (poll_result != 1 || (pfd.revents & (POLLERR | POLLNVAL))) { ok = 0; break; }
+        if (write_full_deadline(fds[0], &requests[i], sizeof(requests[i]), deadline_ms) != 0) { ok = 0; break; }
         graft_msg_header response;
-        if (read_full_fd(fds[0], &response, sizeof(response)) != 0 || graft_ipc_validate_header(&response) != 0 || response.request_id != requests[i].request_id) { ok = 0; break; }
+        if (read_full_deadline(fds[0], &response, sizeof(response), deadline_ms) != 0 || graft_ipc_validate_header(&response) != 0 || response.request_id != requests[i].request_id) { ok = 0; break; }
         if (response.payload_size) {
-            if (response.payload_size != sizeof(hello) || read_full_fd(fds[0], &hello, sizeof(hello)) != 0) { ok = 0; break; }
+            if (response.payload_size != sizeof(hello) || read_full_deadline(fds[0], &hello, sizeof(hello), deadline_ms) != 0) { ok = 0; break; }
         }
     }
     __sync_synchronize();
@@ -371,10 +385,20 @@ static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) 
     uint64_t helper_magic = shared->helper_magic;
     uint64_t helper_pid = shared->helper_pid;
     munmap(shared, shared_size); close(shared_fd); close(fds[0]);
-    int status = 0; waitpid(pid, &status, 0);
-    int exited_ok = WIFEXITED(status) && WEXITSTATUS(status) == 0;
+    int status = 0; int wait_ok = 0;
+    for (;;) {
+        pid_t waited = waitpid(pid, &status, WNOHANG);
+        if (waited == pid) { wait_ok = 1; break; }
+        if (waited < 0 && errno != EINTR) break;
+        struct timespec pause_for = {.tv_sec = 0, .tv_nsec = 10000000}; nanosleep(&pause_for, NULL);
+        clock_gettime(CLOCK_MONOTONIC, &deadline_clock);
+        uint64_t now_ms = (uint64_t)deadline_clock.tv_sec * 1000u + (uint64_t)deadline_clock.tv_nsec / 1000000u;
+        if (now_ms >= deadline_ms) { errno = ETIMEDOUT; break; }
+    }
+    if (!wait_ok) { kill(pid, SIGKILL); while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {} }
+    int exited_ok = wait_ok && WIFEXITED(status) && WEXITSTATUS(status) == 0;
     set_text(summary, ss, ok && shared_ok && exited_ok ? "Persistent helper IPC and shared mapping completed" : "Helper IPC/shared mapping failed");
-    set_text(details, ds, "{\"spawned\":true,\"persistent_requests\":4,\"exit_code\":%d,\"pid\":%lld,\"page_size\":%llu,\"nonce_present\":%s,\"shared_round_trip\":%s,\"shared_path_root\":\"%s\",\"helper_magic\":%llu,\"shared_helper_pid\":%llu,\"heartbeat\":%llu}", WIFEXITED(status) ? WEXITSTATUS(status) : 128, (long long)hello.pid, (unsigned long long)hello.page_size, hello.nonce ? "true" : "false", shared_ok ? "true" : "false", shared_dir, (unsigned long long)helper_magic, (unsigned long long)helper_pid, (unsigned long long)heartbeat);
+    set_text(details, ds, "{\"spawned\":true,\"persistent_requests\":4,\"exit_code\":%d,\"wait_completed\":%s,\"pid\":%lld,\"page_size\":%llu,\"nonce_present\":%s,\"shared_round_trip\":%s,\"shared_path_root\":\"%s\",\"helper_magic\":%llu,\"shared_helper_pid\":%llu,\"heartbeat\":%llu}", wait_ok && WIFEXITED(status) ? WEXITSTATUS(status) : 128, wait_ok ? "true" : "false", (long long)hello.pid, (unsigned long long)hello.page_size, hello.nonce ? "true" : "false", shared_ok ? "true" : "false", shared_dir, (unsigned long long)helper_magic, (unsigned long long)helper_pid, (unsigned long long)heartbeat);
     return ok && shared_ok && exited_ok && hello.pid > 0 && hello.page_size > 0 && hello.nonce != 0 ? 0 : EIO;
 }
 static int helper_probe(char *summary, size_t ss, char *details, size_t ds) { return helper_roundtrip(summary, ss, details, ds); }
@@ -415,7 +439,9 @@ const char *graft_probe_status_name(graft_probe_status status) { switch (status)
 static graft_probe_reason_code reason_for_result(const char *name, graft_probe_status status, int os_error) {
     if (status == GRAFT_PROBE_PASS) return GRAFT_REASON_NONE;
     if (status == GRAFT_PROBE_SKIP) return strcmp(name, "lifecycle_jit") == 0 ? GRAFT_REASON_LIFECYCLE_WAITING : GRAFT_REASON_NOT_SUPPORTED;
-    if (status == GRAFT_PROBE_BLOCKED || os_error == EACCES || os_error == EPERM) return GRAFT_REASON_JIT_NOT_ENABLED;
+    if (status == GRAFT_PROBE_BLOCKED || os_error == EACCES || os_error == EPERM)
+        return strncmp(name, "jit", 3) == 0 ? GRAFT_REASON_JIT_NOT_ENABLED : GRAFT_REASON_CHILD_PROCESS;
+    if (strncmp(name, "helper", 6) == 0 && (os_error == ENOENT || os_error == ESRCH)) return GRAFT_REASON_CHILD_PROCESS;
     if (os_error == EINVAL) return GRAFT_REASON_INVALID_ARGUMENT;
     if (os_error == EIO || os_error == EPIPE || os_error == ETIMEDOUT) return GRAFT_REASON_IO;
     if (strncmp(name, "helper", 6) == 0) return GRAFT_REASON_CHILD_PROCESS;
@@ -425,7 +451,8 @@ static graft_probe_reason_code reason_for_result(const char *name, graft_probe_s
 static graft_error_code graft_error_for_result(graft_probe_status status, int os_error) {
     if (status == GRAFT_PROBE_PASS) return GRAFT_ERROR_NONE;
     if (status == GRAFT_PROBE_SKIP) return GRAFT_ERROR_UNSUPPORTED;
-    if (status == GRAFT_PROBE_BLOCKED || os_error == EACCES || os_error == EPERM) return GRAFT_ERROR_PERMISSION;
+    if (status == GRAFT_PROBE_BLOCKED && os_error != 0) return GRAFT_ERROR_PERMISSION;
+    if (os_error == EACCES || os_error == EPERM) return GRAFT_ERROR_PERMISSION;
     if (os_error == EINVAL) return GRAFT_ERROR_ARGUMENT;
     if (os_error != 0) return GRAFT_ERROR_IO;
     return GRAFT_ERROR_INTERNAL;
