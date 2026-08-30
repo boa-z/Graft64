@@ -1,6 +1,7 @@
 #include "graft/graft_probe.h"
 #include "graft/graft_jit.h"
 #include "graft/graft_ipc_protocol.h"
+#include "graft/graft_process.h"
 #include <errno.h>
 #include <fcntl.h>
 #include <limits.h>
@@ -18,7 +19,6 @@
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <sys/wait.h>
-#include <spawn.h>
 #include <time.h>
 #include <unistd.h>
 #include <stdatomic.h>
@@ -28,7 +28,6 @@
 #include <mach-o/loader.h>
 #endif
 
-extern char **environ;
 static char g_helper_path[PATH_MAX];
 static char g_dylib_path[PATH_MAX];
 static char g_guest_bundle_root[PATH_MAX];
@@ -435,7 +434,12 @@ static int signal_resume_once(int expected_signal) {
     g_recovery_pc = (uintptr_t)&&recovered;
     int result = EFAULT;
     if (expected_signal == SIGBUS) {
-        char path[] = "/tmp/graft64-signal-XXXXXX";
+        char path[PATH_MAX];
+        const char *signal_dir = (g_cache_root[0] && access(g_cache_root, W_OK) == 0) ? g_cache_root : "/tmp";
+        if (snprintf(path, sizeof(path), "%s/.graft64-signal-XXXXXX", signal_dir) >= (int)sizeof(path)) {
+            result = ENAMETOOLONG;
+            goto cleanup;
+        }
         int fd = mkstemp(path);
         if (fd < 0) { result = errno; goto cleanup; }
         unlink(path);
@@ -480,7 +484,13 @@ static int signal_resume(char *summary, size_t ss, char *details, size_t ds) {
     sigemptyset(&action.sa_mask);
     action.sa_flags = SA_SIGINFO | SA_ONSTACK;
     struct sigaction old_bus = {0};
-    if (sigaction(SIGSEGV, &action, &old_action) != 0 || sigaction(SIGBUS, &action, &old_bus) != 0) return errno;
+    if (sigaction(SIGSEGV, &action, &old_action) != 0) return errno;
+    if (sigaction(SIGBUS, &action, &old_bus) != 0) {
+        int e = errno;
+        (void)sigaction(SIGSEGV, &old_action, NULL);
+        errno = e;
+        return e;
+    }
     signal_worker_result main = {0};
     main.result = signal_resume_once(SIGSEGV);
     main.segv = g_fault_signal == SIGSEGV; main.address[0] = g_fault_address; main.fault_pc[0] = g_fault_pc; main.recovery_pc[0] = g_recovery_pc;
@@ -492,7 +502,9 @@ static int signal_resume(char *summary, size_t ss, char *details, size_t ds) {
     int worker_create = pthread_create(&worker_thread, NULL, signal_worker, &worker);
     if (worker_create == 0) pthread_join(worker_thread, NULL);
     else worker.result = worker_create;
-    int restore_result = sigaction(SIGSEGV, &old_action, NULL) | sigaction(SIGBUS, &old_bus, NULL);
+    int restore_segv = sigaction(SIGSEGV, &old_action, NULL);
+    int restore_bus = sigaction(SIGBUS, &old_bus, NULL);
+    int restore_result = restore_segv != 0 || restore_bus != 0;
     int ok = main.result == 0 && worker.result == 0 && restore_result == 0 && main.segv && main.bus && worker.segv && worker.bus;
     set_text(summary, ss, ok ? "SIGSEGV/SIGBUS recovered through TLS ucontext (main and worker)" : "Fault handler did not recover all signals on all threads");
     set_text(details, ds, "{\"signals\":[\"SIGSEGV\",\"SIGBUS\"],\"main\":{\"segv\":%s,\"bus\":%s,\"fault_address_segv\":%llu,\"fault_address_bus\":%llu,\"original_pc_segv\":%llu,\"original_pc_bus\":%llu,\"recovery_pc_segv\":%llu,\"recovery_pc_bus\":%llu},\"worker\":{\"segv\":%s,\"bus\":%s,\"fault_address_segv\":%llu,\"fault_address_bus\":%llu,\"original_pc_segv\":%llu,\"original_pc_bus\":%llu,\"recovery_pc_segv\":%llu,\"recovery_pc_bus\":%llu},\"main_error\":%d,\"worker_error\":%d}", main.segv ? "true" : "false", main.bus ? "true" : "false", (unsigned long long)main.address[0], (unsigned long long)main.address[1], (unsigned long long)main.fault_pc[0], (unsigned long long)main.fault_pc[1], (unsigned long long)main.recovery_pc[0], (unsigned long long)main.recovery_pc[1], worker.segv ? "true" : "false", worker.bus ? "true" : "false", (unsigned long long)worker.address[0], (unsigned long long)worker.address[1], (unsigned long long)worker.fault_pc[0], (unsigned long long)worker.fault_pc[1], (unsigned long long)worker.recovery_pc[0], (unsigned long long)worker.recovery_pc[1], main.result, worker.result);
@@ -556,23 +568,19 @@ static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) 
     memset(shared, 0, sizeof(*shared));
     shared->parent_magic = 0x4752414654504152ull;
     __sync_synchronize();
-    const int socket_child_fd = 10;
-    const int shared_child_fd = 11;
-    posix_spawn_file_actions_t actions;
-    posix_spawn_file_actions_init(&actions);
-    int action_result = posix_spawn_file_actions_adddup2(&actions, fds[1], socket_child_fd);
-    action_result |= posix_spawn_file_actions_adddup2(&actions, shared_fd, shared_child_fd);
-    action_result |= posix_spawn_file_actions_addclose(&actions, fds[0]);
-    action_result |= posix_spawn_file_actions_addclose(&actions, fds[1]);
-    if (action_result != 0) { posix_spawn_file_actions_destroy(&actions); munmap(shared, shared_size); close(shared_fd); close(fds[0]); close(fds[1]); errno = EINVAL; set_text(summary, ss, "Helper spawn file actions failed"); set_text(details, ds, "{\"stage\":\"file_actions\",\"os_error\":%d}", EINVAL); return EINVAL; }
-    char socket_arg[] = "10", shared_arg[] = "11", size_arg[32];
-    snprintf(size_arg, sizeof(size_arg), "%zu", shared_size);
-    char *const argv[] = {g_helper_path, socket_arg, shared_arg, size_arg, NULL};
-    pid_t pid = 0;
-    int spawn_rc = posix_spawn(&pid, g_helper_path, &actions, NULL, argv, environ);
-    posix_spawn_file_actions_destroy(&actions);
+    const graft_helper_launch_config launch = {
+        .path = g_helper_path,
+        .parent_socket_fd = fds[0],
+        .socket_fd = fds[1],
+        .shared_fd = shared_fd,
+        .shared_size = shared_size,
+    };
+    graft_helper_process process = {0};
+    int spawn_result = graft_spawn_helper(&launch, &process);
+    int spawn_error = errno;
     close(fds[1]);
-    if (spawn_rc != 0) { munmap(shared, shared_size); close(shared_fd); close(fds[0]); errno = spawn_rc; set_text(summary, ss, "Helper process spawn failed"); set_text(details, ds, "{\"stage\":\"posix_spawn\",\"os_error\":%d}", spawn_rc); return spawn_rc; }
+    if (spawn_result != 0) { munmap(shared, shared_size); close(shared_fd); close(fds[0]); errno = spawn_error; set_text(summary, ss, "Helper process spawn failed"); set_text(details, ds, "{\"stage\":\"host_adapter\",\"os_error\":%d}", spawn_error); return spawn_error; }
+    pid_t pid = (pid_t)process.pid;
     graft_msg_header requests[] = {
         {GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_HELLO, 0, 1},
         {GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_PING, 0, 2},

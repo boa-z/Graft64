@@ -8,14 +8,22 @@
 extern "C" {
 #endif
 
-typedef struct graft_helper_result {
-    int exit_code;
-    int64_t pid;
-    size_t page_size;
-    uint64_t nonce;
-} graft_helper_result;
+typedef struct graft_helper_launch_config {
+    const char *path;
+    int parent_socket_fd;
+    int socket_fd;
+    int shared_fd;
+    size_t shared_size;
+} graft_helper_launch_config;
 
-int graft_spawn_helper(const char *path, int socket_fd, graft_helper_result *out);
+typedef struct graft_helper_process {
+    int64_t pid;
+} graft_helper_process;
+
+/* Host adapter for launching the bundled helper. The caller owns IPC and
+ * process reaping so it can enforce one deadline across the full exchange. */
+int graft_spawn_helper(const graft_helper_launch_config *config,
+                       graft_helper_process *out_process);
 
 #ifdef __cplusplus
 }
