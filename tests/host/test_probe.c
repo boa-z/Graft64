@@ -8,6 +8,30 @@
 static int count;
 static int helper_passed;
 static int missing_helper_checked;
+static int page_model_checked;
+
+static void check_page_model_details(const char *details) {
+    assert(strstr(details, "\"logical_page_size\":4096") != NULL);
+    assert(strstr(details, "\"region_size\":65536") != NULL);
+    assert(strstr(details, "\"offsets_tested\":16") != NULL);
+    assert(strstr(details, "\"same_host_page_test\":{") != NULL);
+    assert(strstr(details, "\"same_host_page_logical_permissions_separable\":") != NULL);
+    assert(strstr(details, "\"distinct_4k_permissions_supported\":") != NULL);
+    int offset_entries = 0;
+    const char *cursor = details;
+    while ((cursor = strstr(cursor, "\"offset\":")) != NULL) {
+        ++offset_entries;
+        cursor += strlen("\"offset\":");
+    }
+    assert(offset_entries == 16);
+    for (int offset = 0; offset < 65536; offset += 4096) {
+        char expected[32];
+        snprintf(expected, sizeof(expected), "\"offset\":%d", offset);
+        assert(strstr(details, expected) != NULL);
+    }
+    page_model_checked = 1;
+}
+
 static void collect(const graft_probe_result *result, void *context) {
     (void)context;
     assert(result && result->name && result->summary && result->details_json);
@@ -15,6 +39,10 @@ static void collect(const graft_probe_result *result, void *context) {
     printf("%s %s: %s (%s)\n", graft_probe_status_name(result->status), result->name, result->summary, result->details_json);
     fflush(stdout);
     if (result->name[0] == 'h' && result->status == GRAFT_PROBE_PASS) ++helper_passed;
+    if (strcmp(result->name, "page_model") == 0) {
+        assert(result->status == GRAFT_PROBE_PASS);
+        check_page_model_details(result->details_json);
+    }
 }
 
 static void collect_missing_helper(const graft_probe_result *result, void *context) {
@@ -54,6 +82,7 @@ int main(int argc, char **argv) {
     assert(graft_run_all_probes(collect, NULL) == 0);
     assert(count == 12);
     assert(helper_passed >= 2);
+    assert(page_model_checked == 1);
     printf("probe registry tests passed (%d probes, %d helper passes)\n", count, helper_passed);
     return 0;
 }

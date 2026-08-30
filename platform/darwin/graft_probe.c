@@ -145,19 +145,106 @@ static int runtime_paths(char *summary, size_t ss, char *details, size_t ds) {
 }
 
 static int page_model(char *summary, size_t ss, char *details, size_t ds) {
-    long page = getpagesize(); long sys_page = sysconf(_SC_PAGESIZE);
-    size_t len = (size_t)page * 2; void *map = mmap(NULL, len, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
-    if (map == MAP_FAILED) { set_text(summary, ss, "mmap failed"); set_text(details, ds, "{\"errno\":%d}", errno); return errno; }
-    int first = mprotect((char *)map + page, (size_t)page, PROT_READ);
-    int second = mprotect((char *)map + page / 2, (size_t)page, PROT_READ | PROT_EXEC);
-    int offsets_tested = 0, offset_successes = 0;
-    for (size_t offset = 0; offset < 65536; offset += 4096) {
-        ++offsets_tested;
-        if (mprotect((char *)map + (offset % len), 4096, PROT_READ) == 0) ++offset_successes;
+    enum { logical_page_size = 4096, region_size = 64 * 1024,
+           offset_count = region_size / logical_page_size };
+    long page = getpagesize();
+    long sys_page = sysconf(_SC_PAGESIZE);
+    if (page <= 0 || sys_page <= 0) {
+        int e = errno ? errno : EINVAL;
+        set_text(summary, ss, "Host page size query failed");
+        set_text(details, ds, "{\"stage\":\"page_size\",\"os_error\":%d}", e);
+        errno = e;
+        return e;
     }
-    munmap(map, len);
-    set_text(summary, ss, "Host page model measured");
-    set_text(details, ds, "{\"getpagesize\":%ld,\"sysconf_pagesize\":%ld,\"allocation_granularity\":%ld,\"mprotect_aligned\":%d,\"mprotect_unaligned\":%d,\"offsets_tested\":%d,\"offset_successes\":%d}", page, sys_page, page, first, second, offsets_tested, offset_successes);
+    size_t mapping_size = ((size_t)region_size + (size_t)page - 1u) /
+                          (size_t)page * (size_t)page;
+    void *map = mmap(NULL, mapping_size, PROT_READ | PROT_WRITE,
+                     MAP_PRIVATE | MAP_ANON, -1, 0);
+    if (map == MAP_FAILED) {
+        int e = errno;
+        set_text(summary, ss, "64 KiB page-model mapping failed");
+        set_text(details, ds,
+                 "{\"stage\":\"mmap\",\"region_size\":%d,\"mapping_size\":%zu,\"os_error\":%d}",
+                 region_size, mapping_size, e);
+        errno = e;
+        return e;
+    }
+
+    int results[offset_count];
+    int errors[offset_count];
+    int offset_successes = 0;
+    for (size_t index = 0; index < offset_count; ++index) {
+        size_t offset = index * (size_t)logical_page_size;
+        errno = 0;
+        results[index] = mprotect((char *)map + offset,
+                                  (size_t)logical_page_size, PROT_READ);
+        errors[index] = results[index] == 0 ? 0 : errno;
+        if (results[index] == 0) ++offset_successes;
+    }
+
+    errno = 0;
+    int first_permission_result = mprotect(map, (size_t)logical_page_size,
+                                           PROT_READ);
+    int first_permission_errno = first_permission_result == 0 ? 0 : errno;
+    errno = 0;
+    int second_permission_result = mprotect((char *)map + logical_page_size,
+                                            (size_t)logical_page_size,
+                                            PROT_READ | PROT_WRITE);
+    int second_permission_errno = second_permission_result == 0 ? 0 : errno;
+    bool same_host_page_test_applicable = page > logical_page_size;
+    bool same_host_page_logical_permissions_separable =
+        same_host_page_test_applicable && first_permission_result == 0 &&
+        second_permission_result == 0;
+    bool distinct_4k_permissions_supported =
+        page <= logical_page_size || same_host_page_logical_permissions_separable;
+
+    size_t used = (size_t)snprintf(
+        details, ds,
+        "{\"getpagesize\":%ld,\"sysconf_pagesize\":%ld,\"allocation_granularity\":%ld,"
+        "\"logical_page_size\":%d,\"region_size\":%d,\"mapping_size\":%zu,"
+        "\"mmap_flags\":\"MAP_PRIVATE|MAP_ANON\",\"offsets_tested\":%d,"
+        "\"offset_successes\":%d,\"offset_results\":[",
+        page, sys_page, page, logical_page_size, region_size, mapping_size,
+        offset_count, offset_successes);
+    bool details_fit = used < ds;
+    for (size_t index = 0; details_fit && index < offset_count; ++index) {
+        int written = snprintf(details + used, ds - used,
+                               "%s{\"offset\":%zu,\"result\":%d,\"errno\":%d}",
+                               index ? "," : "",
+                               index * (size_t)logical_page_size,
+                               results[index], errors[index]);
+        if (written < 0 || (size_t)written >= ds - used) {
+            details_fit = false;
+        } else {
+            used += (size_t)written;
+        }
+    }
+    if (details_fit) {
+        int written = snprintf(
+            details + used, ds - used,
+            "],\"same_host_page_test\":{\"applicable\":%s,\"first_offset\":0,"
+            "\"first_result\":%d,\"first_errno\":%d,\"second_offset\":%d,"
+            "\"second_result\":%d,\"second_errno\":%d},"
+            "\"same_host_page_logical_permissions_separable\":%s,"
+            "\"distinct_4k_permissions_supported\":%s}",
+            same_host_page_test_applicable ? "true" : "false",
+            first_permission_result, first_permission_errno, logical_page_size,
+            second_permission_result, second_permission_errno,
+            same_host_page_logical_permissions_separable ? "true" : "false",
+            distinct_4k_permissions_supported ? "true" : "false");
+        if (written < 0 || (size_t)written >= ds - used) details_fit = false;
+    }
+    munmap(map, mapping_size);
+    if (!details_fit) {
+        set_text(summary, ss, "Page-model evidence exceeded its JSON buffer");
+        set_text(details, ds, "{\"stage\":\"serialize\",\"os_error\":%d}", EOVERFLOW);
+        errno = EOVERFLOW;
+        return EOVERFLOW;
+    }
+    set_text(summary, ss,
+             distinct_4k_permissions_supported
+                 ? "64 KiB page model measured; distinct 4 KiB permissions supported"
+                 : "64 KiB page model measured; same-host-page 4 KiB permissions are not separable");
     return 0;
 }
 
