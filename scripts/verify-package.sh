@@ -13,9 +13,12 @@ test -x "$APP/GraftProbeHelper" || { echo "helper missing or not executable" >&2
 test -f "$APP/GraftProbeTest.dylib" || { echo "test dylib missing" >&2; exit 1; }
 test -f "$APP/Info.plist" || { echo "Info.plist missing" >&2; exit 1; }
 plutil -lint "$APP/Info.plist" >/dev/null
-if codesign -d --entitlements :- "$APP" > "$OUT/entitlements.plist" 2>&1; then
+codesign_output="$OUT/entitlements.plist.tmp"
+if codesign -d --entitlements :- "$APP" > "$codesign_output" 2>&1 && grep -q '<plist' "$codesign_output"; then
+  mv "$codesign_output" "$OUT/entitlements.plist"
   printf '%s\n' "Signed entitlements extracted to $OUT/entitlements.plist"
 else
+  rm -f "$codesign_output"
   printf '%s\n' "UNSIGNED: codesign entitlements unavailable for this local build; supply a signed device IPA for final entitlement verification." > "$OUT/entitlements.plist"
 fi
 file "$APP/GraftHost"
