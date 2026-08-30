@@ -157,8 +157,8 @@ static int jit_basic(char *summary, size_t ss, char *details, size_t ds) {
     uint32_t code[] = { 0x52800540u, 0xD65F03C0u }; memcpy(region.base, code, sizeof(code));
     int result = graft_jit_invalidate(&region, 0, sizeof(code)); int protect = graft_jit_commit(&region); int value = protect == 0 ? jit_call_42(region.base) : -1;
     int backend_kind = region.backend;
-    graft_jit_free(&region); if (result || protect || value != 42) { set_text(summary, ss, "JIT function did not return 42"); set_text(details, ds, "{\"invalidate\":%d,\"protect\":%d,\"value\":%d,\"errno\":%d}", result, protect, value, errno); return (protect == -1 && (errno == EACCES || errno == EPERM)) ? 3 : EACCES; }
     const char *backend = backend_kind == 2 ? "debugged_anonymous" : "MAP_JIT";
+    graft_jit_free(&region); if (result || protect || value != 42) { set_text(summary, ss, "JIT function did not return 42"); set_text(details, ds, "{\"invalidate\":%d,\"protect\":%d,\"value\":%d,\"errno\":%d,\"backend\":\"%s\"}", result, protect, value, errno, backend); return (protect == -1 && (errno == EACCES || errno == EPERM)) ? 3 : EACCES; }
     set_text(summary, ss, "Executed ARM64 JIT function"); set_text(details, ds, "{\"return_value\":42,\"backend\":\"%s\"}", backend); return 0;
 #endif
 }
