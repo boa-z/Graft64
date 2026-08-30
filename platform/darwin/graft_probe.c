@@ -287,7 +287,14 @@ static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) 
     if (!g_helper_path[0]) { set_text(summary, ss, "Bundled helper path is not configured"); set_text(details, ds, "{\"status\":\"unverified\",\"next_step\":\"Configure helper path from app bundle\"}"); return 2; }
     int fds[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) { int e = errno; set_text(summary, ss, "Helper socketpair failed"); set_text(details, ds, "{\"stage\":\"socketpair\",\"os_error\":%d}", e); return e; }
-    char shared_path[] = "/tmp/graft64-helper-shm-XXXXXX";
+    char shared_path[PATH_MAX];
+    const char *shared_dir = (g_cache_root[0] && access(g_cache_root, W_OK) == 0) ? g_cache_root : "/tmp";
+    if (snprintf(shared_path, sizeof(shared_path), "%s/.graft64-helper-shm-XXXXXX", shared_dir) >= (int)sizeof(shared_path)) {
+        close(fds[0]); close(fds[1]); errno = ENAMETOOLONG;
+        set_text(summary, ss, "Helper shared-memory path is too long");
+        set_text(details, ds, "{\"stage\":\"shared_path\",\"os_error\":%d}", errno);
+        return errno;
+    }
     int shared_fd = mkstemp(shared_path);
     if (shared_fd < 0) { int e = errno; close(fds[0]); close(fds[1]); set_text(summary, ss, "Helper shared-memory file creation failed"); set_text(details, ds, "{\"stage\":\"mkstemp\",\"os_error\":%d}", e); return e; }
     unlink(shared_path);
@@ -327,7 +334,8 @@ static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) 
     for (size_t i = 0; i < sizeof(requests) / sizeof(requests[0]); ++i) {
         if (write_full_fd(fds[0], &requests[i], sizeof(requests[i])) != 0) { ok = 0; break; }
         struct pollfd pfd = {.fd = fds[0], .events = POLLIN};
-        if (poll(&pfd, 1, 2000) != 1) { ok = 0; break; }
+        int poll_result = poll(&pfd, 1, 2000);
+        if (poll_result != 1 || (pfd.revents & (POLLERR | POLLNVAL))) { ok = 0; break; }
         graft_msg_header response;
         if (read_full_fd(fds[0], &response, sizeof(response)) != 0 || graft_ipc_validate_header(&response) != 0 || response.request_id != requests[i].request_id) { ok = 0; break; }
         if (response.payload_size) {
@@ -337,11 +345,13 @@ static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) 
     __sync_synchronize();
     int shared_ok = shared->parent_magic == 0x4752414654504152ull && shared->helper_magic == 0x4752414654484c50ull && shared->helper_pid == (uint64_t)pid && shared->heartbeat >= 4;
     uint64_t heartbeat = shared->heartbeat;
+    uint64_t helper_magic = shared->helper_magic;
+    uint64_t helper_pid = shared->helper_pid;
     munmap(shared, shared_size); close(shared_fd); close(fds[0]);
     int status = 0; waitpid(pid, &status, 0);
     int exited_ok = WIFEXITED(status) && WEXITSTATUS(status) == 0;
     set_text(summary, ss, ok && shared_ok && exited_ok ? "Persistent helper IPC and shared mapping completed" : "Helper IPC/shared mapping failed");
-    set_text(details, ds, "{\"spawned\":true,\"persistent_requests\":4,\"exit_code\":%d,\"pid\":%lld,\"page_size\":%llu,\"nonce_present\":%s,\"shared_round_trip\":%s,\"heartbeat\":%llu}", WIFEXITED(status) ? WEXITSTATUS(status) : 128, (long long)hello.pid, (unsigned long long)hello.page_size, hello.nonce ? "true" : "false", shared_ok ? "true" : "false", (unsigned long long)heartbeat);
+    set_text(details, ds, "{\"spawned\":true,\"persistent_requests\":4,\"exit_code\":%d,\"pid\":%lld,\"page_size\":%llu,\"nonce_present\":%s,\"shared_round_trip\":%s,\"shared_path_root\":\"%s\",\"helper_magic\":%llu,\"shared_helper_pid\":%llu,\"heartbeat\":%llu}", WIFEXITED(status) ? WEXITSTATUS(status) : 128, (long long)hello.pid, (unsigned long long)hello.page_size, hello.nonce ? "true" : "false", shared_ok ? "true" : "false", shared_dir, (unsigned long long)helper_magic, (unsigned long long)helper_pid, (unsigned long long)heartbeat);
     return ok && shared_ok && exited_ok && hello.pid > 0 && hello.page_size > 0 && hello.nonce != 0 ? 0 : EIO;
 }
 static int helper_probe(char *summary, size_t ss, char *details, size_t ds) { return helper_roundtrip(summary, ss, details, ds); }
