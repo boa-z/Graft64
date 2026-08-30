@@ -16,6 +16,8 @@ final class ProbeStore {
         let runtimeRoot = bundleRoot
         let dataRoot = URL.documentsDirectory.appending(path: "Graft64", directoryHint: .isDirectory).path
         let cacheRoot = URL.cachesDirectory.appending(path: "Graft64", directoryHint: .isDirectory).path
+        try? FileManager.default.createDirectory(atPath: dataRoot, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(atPath: cacheRoot, withIntermediateDirectories: true)
         bundleRoot.withCString { guest in
             runtimeRoot.withCString { runtime in
                 dataRoot.withCString { data in

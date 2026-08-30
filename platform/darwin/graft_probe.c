@@ -167,7 +167,13 @@ static int jit_write_protect(char *summary, size_t ss, char *details, size_t ds)
 #if !defined(__aarch64__) && !defined(__arm64__)
     set_text(summary, ss, "Requires an arm64 device"); set_text(details, ds, "{\"reason\":\"host architecture is not arm64\"}"); return 2;
 #else
-    graft_jit_region region = {0}; if (graft_jit_alloc(4096, &region) != 0) return (errno == EACCES || errno == EPERM) ? 3 : errno;
+    graft_jit_region region = {0};
+    if (graft_jit_alloc(4096, &region) != 0) {
+        int e = errno;
+        set_text(summary, ss, "JIT write-protect allocation failed");
+        set_text(details, ds, "{\"stage\":\"alloc\",\"os_error\":%d}", e);
+        return (e == EACCES || e == EPERM) ? 3 : e;
+    }
     uint32_t code[] = { 0x52800020u, 0xD65F03C0u }; memcpy(region.base, code, sizeof(code)); graft_jit_invalidate(&region, 0, sizeof(code));
     int rx1 = graft_jit_commit(&region); int first = rx1 == 0 ? jit_call_42(region.base) : -1;
     int rw = graft_jit_begin_write(&region); code[0] = 0x52800140u; memcpy(region.base, code, sizeof(code)); graft_jit_invalidate(&region, 0, sizeof(code)); int rx2 = graft_jit_commit(&region); int second = rx2 == 0 ? jit_call_42(region.base) : -1;
@@ -183,7 +189,15 @@ static int jit_multithread(char *summary, size_t ss, char *details, size_t ds) {
 #if !defined(__aarch64__) && !defined(__arm64__)
     set_text(summary, ss, "Requires an arm64 device"); set_text(details, ds, "{\"reason\":\"host architecture is not arm64\"}"); return 2;
 #else
-    graft_jit_region region = {0}; if (jit_basic(summary, ss, details, ds) != 0 || graft_jit_alloc(4096, &region) != 0) return 1;
+    int basic_result = jit_basic(summary, ss, details, ds);
+    if (basic_result != 0) return basic_result;
+    graft_jit_region region = {0};
+    if (graft_jit_alloc(4096, &region) != 0) {
+        int e = errno;
+        set_text(summary, ss, "Multithread JIT allocation failed");
+        set_text(details, ds, "{\"stage\":\"alloc\",\"os_error\":%d}", e);
+        return (e == EACCES || e == EPERM) ? 3 : e;
+    }
     uint32_t code[] = { 0x52800540u, 0xD65F03C0u }; memcpy(region.base, code, sizeof(code)); graft_jit_invalidate(&region, 0, sizeof(code)); if (graft_jit_commit(&region) != 0) { graft_jit_free(&region); return EACCES; }
     pthread_t threads[4]; thread_arg args[4] = {{0}}; for (int i = 0; i < 4; ++i) { args[i].region = &region; pthread_create(&threads[i], NULL, jit_thread, &args[i]); }
     int failures = 0; for (int i = 0; i < 4; ++i) { pthread_join(threads[i], NULL); failures += args[i].failures; } graft_jit_free(&region);
@@ -269,7 +283,14 @@ static int dlopen_bundle(char *summary, size_t ss, char *details, size_t ds) {
 }
 static int unix_socket_probe(char *summary, size_t ss, char *details, size_t ds) { int fds[2]; if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) return errno; const char msg[] = "graft64"; char out[sizeof(msg)] = {0}; ssize_t w = write(fds[0], msg, sizeof(msg)); ssize_t r = read(fds[1], out, sizeof(out)); close(fds[0]); close(fds[1]); set_text(summary, ss, "Unix socketpair round trip completed"); set_text(details, ds, "{\"written\":%zd,\"read\":%zd}", w, r); return (w == (ssize_t)sizeof(msg) && r == (ssize_t)sizeof(msg) && memcmp(msg, out, sizeof(msg)) == 0) ? 0 : EIO; }
 static int shared_mapping(char *summary, size_t ss, char *details, size_t ds) {
-    char path[] = "/tmp/graft64-shm-XXXXXX";
+    char path[PATH_MAX];
+    const char *shared_dir = (g_cache_root[0] && access(g_cache_root, W_OK) == 0) ? g_cache_root : "/tmp";
+    if (snprintf(path, sizeof(path), "%s/.graft64-shm-XXXXXX", shared_dir) >= (int)sizeof(path)) {
+        errno = ENAMETOOLONG;
+        set_text(summary, ss, "Shared mapping path is too long");
+        set_text(details, ds, "{\"stage\":\"shared_path\",\"os_error\":%d}", errno);
+        return errno;
+    }
     int fd = mkstemp(path);
     if (fd < 0) { int e = errno; set_text(summary, ss, "Shared mapping file creation failed"); set_text(details, ds, "{\"stage\":\"mkstemp\",\"os_error\":%d}", e); return e; }
     unlink(path);
@@ -282,7 +303,7 @@ static int shared_mapping(char *summary, size_t ss, char *details, size_t ds) {
     int ok = m[0] == 0xA5;
     munmap(m, 4096);
     set_text(summary, ss, ok ? "File-backed shared mapping completed" : "Shared mapping round trip failed");
-    set_text(details, ds, "{\"bytes\":4096,\"round_trip\":%s}", ok ? "true" : "false");
+    set_text(details, ds, "{\"bytes\":4096,\"round_trip\":%s,\"shared_path_root\":\"%s\"}", ok ? "true" : "false", shared_dir);
     return ok ? 0 : EIO;
 }
 static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) {
