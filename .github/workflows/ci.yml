@@ -1,0 +1,9 @@
+name: graft64-ci
+on: [push, pull_request]
+jobs:
+  host:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - run: ./scripts/run-host-tests.sh
+      - run: xcodebuild -project app/GraftHost/GraftHost.xcodeproj -target GraftHost -sdk iphonesimulator -configuration Debug CODE_SIGNING_ALLOWED=NO build

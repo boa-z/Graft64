@@ -1,0 +1,11 @@
+out/
+DerivedData/
+*.xcuserstate
+*.ipa
+*.dSYM/
+third_party/src/
+third_party/downloads/
+runtime/**/*.dylib
+runtime/**/*.so
+runtime/**/*.exe
+.DS_Store

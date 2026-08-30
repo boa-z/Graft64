@@ -1,0 +1,4 @@
+schema_version: 1
+stage: GRAFT-0001
+dependencies: []
+notes: Wine and FEX are intentionally not fetched until G0 device feasibility is green.
