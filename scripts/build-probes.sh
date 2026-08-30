@@ -4,10 +4,11 @@ ROOT="$(cd -- "$(dirname -- "$0")/.." && pwd)"
 OUT="$ROOT/out"
 SDK_NAME="${GRAFT_SDK:-iphonesimulator}"
 CONFIGURATION="${GRAFT_CONFIGURATION:-Debug}"
+CODE_SIGNING_ALLOWED="${GRAFT_CODE_SIGNING_ALLOWED:-NO}"
 mkdir -p "$OUT"
 "$ROOT/scripts/bootstrap-macos.sh"
 xcodebuild -project "$ROOT/app/GraftHost/GraftHost.xcodeproj" -target GraftHost -sdk "$SDK_NAME" -configuration "$CONFIGURATION" \
-  CODE_SIGNING_ALLOWED=NO ONLY_ACTIVE_ARCH=NO SYMROOT="$OUT/build" OBJROOT="$OUT/obj" build
+  CODE_SIGNING_ALLOWED="$CODE_SIGNING_ALLOWED" ONLY_ACTIVE_ARCH=NO SYMROOT="$OUT/build" OBJROOT="$OUT/obj" build
 APP="$OUT/build/${CONFIGURATION}-${SDK_NAME}/GraftHost.app"
 test -d "$APP" || { echo "built app not found: $APP" >&2; exit 1; }
 rm -rf "$OUT/Payload"
@@ -22,4 +23,9 @@ clang -target "$HELPER_TARGET" -isysroot "$SDKROOT_DEVICE" -I"$ROOT/platform/inc
 clang -target "$HELPER_TARGET" -isysroot "$SDKROOT_DEVICE" -dynamiclib \
   "$ROOT/probes/dylib/GraftProbeTest.c" -o "$OUT/Payload/GraftHost.app/GraftProbeTest.dylib"
 chmod +x "$OUT/Payload/GraftHost.app/GraftProbeHelper"
+if [[ "$CODE_SIGNING_ALLOWED" == YES && -n "${GRAFT_CODE_SIGN_IDENTITY:-}" ]]; then
+  codesign --force --sign "$GRAFT_CODE_SIGN_IDENTITY" "$OUT/Payload/GraftHost.app/GraftProbeHelper"
+  codesign --force --sign "$GRAFT_CODE_SIGN_IDENTITY" "$OUT/Payload/GraftHost.app/GraftProbeTest.dylib"
+  codesign --force --sign "$GRAFT_CODE_SIGN_IDENTITY" "$OUT/Payload/GraftHost.app"
+fi
 "$ROOT/scripts/package-ipa.sh"
