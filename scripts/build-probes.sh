@@ -13,7 +13,7 @@ test -d "$APP" || { echo "built app not found: $APP" >&2; exit 1; }
 rm -rf "$OUT/Payload"
 mkdir -p "$OUT/Payload"
 cp -R "$APP" "$OUT/Payload/GraftHost.app"
-SDKROOT_DEVICE="$(xcrun --sdk iphoneos --show-sdk-path)"
+SDKROOT_DEVICE="$(xcrun --sdk "$SDK_NAME" --show-sdk-path)"
 HELPER_TARGET="arm64-apple-ios17.4"
 if [[ "$SDK_NAME" == iphonesimulator* ]]; then HELPER_TARGET="arm64-apple-ios17.4-simulator"; fi
 clang -target "$HELPER_TARGET" -isysroot "$SDKROOT_DEVICE" -I"$ROOT/platform/include" \
