@@ -9,6 +9,7 @@ static int count;
 static int helper_passed;
 static int missing_helper_checked;
 static int page_model_checked;
+static int runtime_paths_checked;
 
 static void check_page_model_details(const char *details) {
     assert(strstr(details, "\"logical_page_size\":4096") != NULL);
@@ -43,6 +44,15 @@ static void collect(const graft_probe_result *result, void *context) {
         assert(result->status == GRAFT_PROBE_PASS);
         check_page_model_details(result->details_json);
     }
+    if (strcmp(result->name, "runtime_paths") == 0) {
+        assert(result->status == GRAFT_PROBE_PASS);
+        assert(strstr(result->details_json, "\"source\":\"host_context\"") != NULL);
+        assert(strstr(result->details_json, "\"ns_get_executable_path\":") != NULL);
+        assert(strstr(result->details_json, "\"bundle_executable_url\":\"/tmp/graft64-bundle/GraftHost\"") != NULL);
+        assert(strstr(result->details_json, "\"binary_uuid\":") != NULL);
+        assert(strstr(result->details_json, "\"livecontainer_evidence\":\"none\"") != NULL);
+        runtime_paths_checked = 1;
+    }
 }
 
 static void collect_missing_helper(const graft_probe_result *result, void *context) {
@@ -68,6 +78,19 @@ int main(int argc, char **argv) {
         .cache_root = "/tmp/graft64-cache",
     };
     assert(graft_configure_path_context(&paths) == 0);
+    const graft_runtime_observation observation = {
+        .bundle_url = "/tmp/graft64-bundle",
+        .bundle_executable_url = "/tmp/graft64-bundle/GraftHost",
+        .argv0 = "/tmp/graft64-bundle/GraftHost",
+        .current_working_directory = "/tmp",
+        .home_directory = "/tmp/graft64-home",
+        .documents_directory = "/tmp/graft64-home/Documents",
+        .library_directory = "/tmp/graft64-home/Library",
+        .temporary_directory = "/tmp/graft64-home/tmp",
+        .app_version = "0.1-test",
+        .livecontainer_evidence = "none",
+    };
+    assert(graft_configure_runtime_observation(&observation) == 0);
     assert((graft_jit_capabilities() & (GRAFT_JIT_CAP_ALLOCATE |
                                         GRAFT_JIT_CAP_WRITE |
                                         GRAFT_JIT_CAP_EXECUTE |
@@ -83,6 +106,7 @@ int main(int argc, char **argv) {
     assert(count == 12);
     assert(helper_passed >= 2);
     assert(page_model_checked == 1);
+    assert(runtime_paths_checked == 1);
     printf("probe registry tests passed (%d probes, %d helper passes)\n", count, helper_passed);
     return 0;
 }

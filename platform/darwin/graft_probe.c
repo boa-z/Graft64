@@ -24,6 +24,8 @@
 #include <stdatomic.h>
 #if defined(__APPLE__)
 #include <dlfcn.h>
+#include <mach-o/dyld.h>
+#include <mach-o/loader.h>
 #endif
 
 extern char **environ;
@@ -33,6 +35,16 @@ static char g_guest_bundle_root[PATH_MAX];
 static char g_runtime_root[PATH_MAX];
 static char g_data_root[PATH_MAX];
 static char g_cache_root[PATH_MAX];
+static char g_bundle_url[PATH_MAX];
+static char g_bundle_executable_url[PATH_MAX];
+static char g_argv0[PATH_MAX];
+static char g_current_working_directory[PATH_MAX];
+static char g_home_directory[PATH_MAX];
+static char g_documents_directory[PATH_MAX];
+static char g_library_directory[PATH_MAX];
+static char g_temporary_directory[PATH_MAX];
+static char g_app_version[128];
+static char g_livecontainer_evidence[256];
 static atomic_bool g_lifecycle_background_seen;
 static atomic_bool g_lifecycle_foreground_seen;
 static graft_jit_region g_lifecycle_code_cache;
@@ -53,6 +65,38 @@ int graft_configure_path_context(const graft_path_context *context) {
     char *destinations[] = {g_guest_bundle_root, g_runtime_root, g_data_root, g_cache_root};
     for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
         if (!values[i][0] || strlen(values[i]) >= PATH_MAX) { errno = EINVAL; return -1; }
+    }
+    for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
+        strcpy(destinations[i], values[i]);
+    return 0;
+}
+int graft_configure_runtime_observation(const graft_runtime_observation *observation) {
+    if (!observation) { errno = EINVAL; return -1; }
+    const char *values[] = {
+        observation->bundle_url, observation->bundle_executable_url,
+        observation->argv0, observation->current_working_directory,
+        observation->home_directory, observation->documents_directory,
+        observation->library_directory, observation->temporary_directory,
+        observation->app_version, observation->livecontainer_evidence,
+    };
+    char *destinations[] = {
+        g_bundle_url, g_bundle_executable_url, g_argv0,
+        g_current_working_directory, g_home_directory, g_documents_directory,
+        g_library_directory, g_temporary_directory, g_app_version,
+        g_livecontainer_evidence,
+    };
+    const size_t capacities[] = {
+        sizeof(g_bundle_url), sizeof(g_bundle_executable_url), sizeof(g_argv0),
+        sizeof(g_current_working_directory), sizeof(g_home_directory),
+        sizeof(g_documents_directory), sizeof(g_library_directory),
+        sizeof(g_temporary_directory), sizeof(g_app_version),
+        sizeof(g_livecontainer_evidence),
+    };
+    for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i) {
+        if (!values[i] || !values[i][0] || strlen(values[i]) >= capacities[i]) {
+            errno = EINVAL;
+            return -1;
+        }
     }
     for (size_t i = 0; i < sizeof(values) / sizeof(values[0]); ++i)
         strcpy(destinations[i], values[i]);
@@ -133,14 +177,58 @@ static int read_full_deadline(int fd, void *buffer, size_t size, uint64_t deadli
     return 0;
 }
 
+static void binary_uuid(char output[37]) {
+    strcpy(output, "unavailable");
+#if defined(__APPLE__)
+    const struct mach_header *header = _dyld_get_image_header(0);
+    if (!header || header->magic != MH_MAGIC_64) return;
+    const struct mach_header_64 *header64 = (const struct mach_header_64 *)header;
+    const uint8_t *cursor = (const uint8_t *)(header64 + 1);
+    const uint8_t *commands_end = cursor + header64->sizeofcmds;
+    for (uint32_t index = 0; index < header64->ncmds; ++index) {
+        if ((size_t)(commands_end - cursor) < sizeof(struct load_command)) return;
+        const struct load_command *command = (const struct load_command *)cursor;
+        if (command->cmdsize < sizeof(*command) || command->cmdsize > (size_t)(commands_end - cursor)) return;
+        if (command->cmd == LC_UUID && command->cmdsize >= sizeof(struct uuid_command)) {
+            const struct uuid_command *uuid = (const struct uuid_command *)command;
+            snprintf(output, 37,
+                     "%02X%02X%02X%02X-%02X%02X-%02X%02X-%02X%02X-%02X%02X%02X%02X%02X%02X",
+                     uuid->uuid[0], uuid->uuid[1], uuid->uuid[2], uuid->uuid[3],
+                     uuid->uuid[4], uuid->uuid[5], uuid->uuid[6], uuid->uuid[7],
+                     uuid->uuid[8], uuid->uuid[9], uuid->uuid[10], uuid->uuid[11],
+                     uuid->uuid[12], uuid->uuid[13], uuid->uuid[14], uuid->uuid[15]);
+            return;
+        }
+        cursor += command->cmdsize;
+    }
+#endif
+}
+
 static int runtime_paths(char *summary, size_t ss, char *details, size_t ds) {
     if (!g_guest_bundle_root[0] || !g_runtime_root[0] || !g_data_root[0] || !g_cache_root[0]) {
         set_text(summary, ss, "Explicit runtime path context is missing");
         set_text(details, ds, "{\"reason\":\"path_context_missing\",\"required\":[\"guest_bundle_root\",\"runtime_root\",\"data_root\",\"cache_root\"]}");
         return PROBE_INTERNAL_SKIP;
     }
+    if (!g_bundle_url[0] || !g_bundle_executable_url[0] || !g_argv0[0] ||
+        !g_current_working_directory[0] || !g_home_directory[0] ||
+        !g_documents_directory[0] || !g_library_directory[0] ||
+        !g_temporary_directory[0] || !g_app_version[0] ||
+        !g_livecontainer_evidence[0]) {
+        set_text(summary, ss, "Runtime observation metadata is missing");
+        set_text(details, ds, "{\"reason\":\"runtime_observation_missing\"}");
+        return PROBE_INTERNAL_SKIP;
+    }
+    char executable_path[PATH_MAX] = "unavailable";
+#if defined(__APPLE__)
+    uint32_t executable_path_size = (uint32_t)sizeof(executable_path);
+    if (_NSGetExecutablePath(executable_path, &executable_path_size) != 0)
+        strcpy(executable_path, "path-too-long");
+#endif
+    char uuid[37];
+    binary_uuid(uuid);
     set_text(summary, ss, "Resolved explicit runtime path context");
-    set_text(details, ds, "{\"source\":\"host_context\",\"guest_bundle_root\":\"%s\",\"runtime_root\":\"%s\",\"data_root\":\"%s\",\"cache_root\":\"%s\"}", g_guest_bundle_root, g_runtime_root, g_data_root, g_cache_root);
+    set_text(details, ds, "{\"source\":\"host_context\",\"guest_bundle_root\":\"%s\",\"runtime_root\":\"%s\",\"data_root\":\"%s\",\"cache_root\":\"%s\",\"ns_get_executable_path\":\"%s\",\"bundle_url\":\"%s\",\"bundle_executable_url\":\"%s\",\"argv0\":\"%s\",\"current_working_directory\":\"%s\",\"home_directory\":\"%s\",\"documents_directory\":\"%s\",\"library_directory\":\"%s\",\"temporary_directory\":\"%s\",\"binary_uuid\":\"%s\",\"app_version\":\"%s\",\"livecontainer_evidence\":\"%s\"}", g_guest_bundle_root, g_runtime_root, g_data_root, g_cache_root, executable_path, g_bundle_url, g_bundle_executable_url, g_argv0, g_current_working_directory, g_home_directory, g_documents_directory, g_library_directory, g_temporary_directory, uuid, g_app_version, g_livecontainer_evidence);
     return 0;
 }
 
@@ -553,7 +641,7 @@ static graft_error_code graft_error_for_result(graft_probe_status status, int os
 static const probe_entry *find_probe(const char *name) { for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); ++i) if (strcmp(name, probes[i].name) == 0) return &probes[i]; return NULL; }
 int graft_run_probe(const char *name, graft_probe_callback callback, void *context) {
     if (!name || !callback) { errno = EINVAL; return -1; } const probe_entry *entry = find_probe(name); if (!entry) { errno = ENOENT; return -1; }
-    char summary[256] = {0}, details[2048] = {0}; struct timespec start = {0}, end = {0}; clock_gettime(CLOCK_MONOTONIC, &start); errno = 0; int rc = entry->fn(summary, sizeof(summary), details, sizeof(details)); int saved_errno = errno; clock_gettime(CLOCK_MONOTONIC, &end);
+    char summary[256] = {0}, details[8192] = {0}; struct timespec start = {0}, end = {0}; clock_gettime(CLOCK_MONOTONIC, &start); errno = 0; int rc = entry->fn(summary, sizeof(summary), details, sizeof(details)); int saved_errno = errno; clock_gettime(CLOCK_MONOTONIC, &end);
     graft_probe_status status = rc == 0 ? GRAFT_PROBE_PASS : rc == PROBE_INTERNAL_SKIP ? GRAFT_PROBE_SKIP : rc == PROBE_INTERNAL_BLOCKED ? GRAFT_PROBE_BLOCKED : GRAFT_PROBE_FAIL;
     int os_error = rc > 0 ? rc : saved_errno;
     graft_probe_result result = {.name = entry->name, .status = status, .reason_code = reason_for_result(entry->name, status, os_error), .graft_error = graft_error_for_result(status, os_error), .os_error = os_error, .duration_ns = (uint64_t)(end.tv_sec - start.tv_sec) * 1000000000ull + (uint64_t)(end.tv_nsec - start.tv_nsec), .summary = summary, .details_json = details}; callback(&result, context); return 0;

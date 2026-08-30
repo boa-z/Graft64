@@ -54,6 +54,19 @@ typedef struct graft_path_context {
     const char *cache_root;
 } graft_path_context;
 
+typedef struct graft_runtime_observation {
+    const char *bundle_url;
+    const char *bundle_executable_url;
+    const char *argv0;
+    const char *current_working_directory;
+    const char *home_directory;
+    const char *documents_directory;
+    const char *library_directory;
+    const char *temporary_directory;
+    const char *app_version;
+    const char *livecontainer_evidence;
+} graft_runtime_observation;
+
 typedef void (*graft_probe_callback)(const graft_probe_result *result,
                                      void *context);
 
@@ -66,6 +79,7 @@ const char *graft_probe_status_name(graft_probe_status status);
 int graft_configure_helper(const char *path);
 int graft_configure_dylib(const char *path);
 int graft_configure_path_context(const graft_path_context *context);
+int graft_configure_runtime_observation(const graft_runtime_observation *observation);
 int graft_lifecycle_note_background(void);
 int graft_lifecycle_note_foreground(void);
 
