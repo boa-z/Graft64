@@ -2,6 +2,7 @@ import SwiftUI
 
 struct ContentView: View {
     @Bindable var store: ProbeStore
+    @Environment(\.scenePhase) private var scenePhase
     @State private var showingCopied = false
     var body: some View {
         NavigationStack {
@@ -28,6 +29,16 @@ struct ContentView: View {
                 ToolbarItem(placement: .topBarTrailing) { Button("Copy Summary", systemImage: "doc.on.doc") { UIPasteboard.general.string = store.copySummary(); showingCopied = true } .disabled(store.results.isEmpty) }
             }
             .alert("Copied", isPresented: $showingCopied) { }
+            .onChange(of: scenePhase) { _, phase in
+                switch phase {
+                case .background:
+                    store.noteBackground()
+                case .active:
+                    store.noteForeground()
+                default:
+                    break
+                }
+            }
         }
     }
 }

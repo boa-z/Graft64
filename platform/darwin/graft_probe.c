@@ -9,6 +9,7 @@
 #include <setjmp.h>
 #include <signal.h>
 #include <stdarg.h>
+#include <stdbool.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -20,6 +21,7 @@
 #include <spawn.h>
 #include <time.h>
 #include <unistd.h>
+#include <stdatomic.h>
 #if defined(__APPLE__)
 #include <mach-o/dyld.h>
 #include <dlfcn.h>
@@ -28,6 +30,8 @@
 extern char **environ;
 static char g_helper_path[PATH_MAX];
 static char g_dylib_path[PATH_MAX];
+static atomic_bool g_lifecycle_background_seen;
+static atomic_bool g_lifecycle_foreground_seen;
 int graft_configure_helper(const char *path) {
     if (!path || strlen(path) >= sizeof(g_helper_path)) { errno = EINVAL; return -1; }
     strcpy(g_helper_path, path); return 0;
@@ -35,6 +39,18 @@ int graft_configure_helper(const char *path) {
 int graft_configure_dylib(const char *path) {
     if (!path || strlen(path) >= sizeof(g_dylib_path)) { errno = EINVAL; return -1; }
     strcpy(g_dylib_path, path); return 0;
+}
+int graft_lifecycle_note_background(void) {
+    atomic_store_explicit(&g_lifecycle_background_seen, true, memory_order_release);
+    return 0;
+}
+int graft_lifecycle_note_foreground(void) {
+    if (!atomic_load_explicit(&g_lifecycle_background_seen, memory_order_acquire)) {
+        errno = EINVAL;
+        return -1;
+    }
+    atomic_store_explicit(&g_lifecycle_foreground_seen, true, memory_order_release);
+    return 0;
 }
 
 typedef int (*probe_fn)(char *summary, size_t summary_size, char *details, size_t details_size);
@@ -200,7 +216,20 @@ static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) 
     close(fds[0]); int status = 0; waitpid(pid, &status, 0); set_text(summary, ss, ok && WIFEXITED(status) && WEXITSTATUS(status) == 0 ? "Helper IPC handshake completed" : "Helper IPC handshake failed"); set_text(details, ds, "{\"spawned\":true,\"exit_code\":%d,\"messages\":3,\"pid\":%lld,\"page_size\":%llu,\"nonce_present\":%s}", WIFEXITED(status) ? WEXITSTATUS(status) : 128, (long long)hello.pid, (unsigned long long)hello.page_size, hello.nonce ? "true" : "false"); return ok && WIFEXITED(status) && WEXITSTATUS(status) == 0 && hello.pid > 0 && hello.page_size > 0 && hello.nonce != 0 ? 0 : EIO;
 }
 static int helper_probe(char *summary, size_t ss, char *details, size_t ds) { return helper_roundtrip(summary, ss, details, ds); }
-static int lifecycle_jit(char *summary, size_t ss, char *details, size_t ds) { set_text(summary, ss, "Lifecycle requires manual background/foreground action"); set_text(details, ds, "{\"status\":\"manual\",\"instructions\":\"Run jit_basic, background app, return, run again\"}"); return 2; }
+static int lifecycle_jit(char *summary, size_t ss, char *details, size_t ds) {
+    if (!atomic_load_explicit(&g_lifecycle_background_seen, memory_order_acquire) ||
+        !atomic_load_explicit(&g_lifecycle_foreground_seen, memory_order_acquire)) {
+        set_text(summary, ss, "Waiting for background/foreground transition");
+        set_text(details, ds, "{\"status\":\"manual\",\"instructions\":\"Send the app to background and return to foreground; lifecycle_jit will run automatically\"}");
+        return 2;
+    }
+    int rc = jit_basic(summary, ss, details, ds);
+    if (rc == 0) {
+        set_text(summary, ss, "JIT resumed after background/foreground transition");
+        set_text(details, ds, "{\"status\":\"pass\",\"background_seen\":true,\"foreground_seen\":true,\"jit_return_value\":42}");
+    }
+    return rc;
+}
 
 static const probe_entry probes[] = {
     {"runtime_paths", runtime_paths}, {"page_model", page_model}, {"jit_basic", jit_basic}, {"jit_write_protect", jit_write_protect}, {"jit_multithread", jit_multithread}, {"signal_resume", signal_resume}, {"dlopen_bundle", dlopen_bundle}, {"unix_socket", unix_socket_probe}, {"shared_mapping", shared_mapping}, {"helper_spawn", helper_probe}, {"helper_ipc", helper_probe}, {"lifecycle_jit", lifecycle_jit},

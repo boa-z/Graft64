@@ -8,6 +8,7 @@ final class ProbeStore {
     private(set) var isRunning = false
     private(set) var lastExportURL: URL?
     var logText = "Ready. JIT probes require a device with JIT enabled by the host."
+    private var backgroundObserved = false
 
     init() {
         if let helperURL = Bundle.main.url(forResource: "GraftProbeHelper", withExtension: nil) {
@@ -36,6 +37,20 @@ final class ProbeStore {
         isRunning = true
         let context = Unmanaged.passUnretained(self).toOpaque()
         _ = graft_run_probe(name, Self.callback, context)
+        isRunning = false
+    }
+
+    func noteBackground() {
+        backgroundObserved = true
+        _ = graft_lifecycle_note_background()
+    }
+
+    func noteForeground() {
+        guard backgroundObserved, !isRunning else { return }
+        guard graft_lifecycle_note_foreground() == 0 else { return }
+        isRunning = true
+        let context = Unmanaged.passUnretained(self).toOpaque()
+        _ = graft_run_probe("lifecycle_jit", Self.callback, context)
         isRunning = false
     }
 
@@ -79,7 +94,12 @@ final class ProbeStore {
         let summary = String(cString: result.pointee.summary)
         let details = String(cString: result.pointee.details_json)
         let status: ProbeStatus = switch result.pointee.status { case GRAFT_PROBE_PASS: .pass; case GRAFT_PROBE_FAIL: .fail; case GRAFT_PROBE_BLOCKED: .blocked; default: .skip }
-        results.append(.init(name: name, status: status, systemError: result.pointee.system_error, durationNanoseconds: result.pointee.duration_ns, summary: summary, detailsJSON: details))
+        let updated = ProbeResultModel(name: name, status: status, systemError: result.pointee.system_error, durationNanoseconds: result.pointee.duration_ns, summary: summary, detailsJSON: details)
+        if let index = results.firstIndex(where: { $0.id == updated.id }) {
+            results[index] = updated
+        } else {
+            results.append(updated)
+        }
         logText += "\n\(status.rawValue) \(name): \(summary)"
     }
 }
