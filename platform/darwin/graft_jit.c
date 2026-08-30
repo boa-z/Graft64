@@ -13,18 +13,6 @@
 #define MAP_JIT 0x800
 #endif
 
-#if defined(__APPLE__) && TARGET_OS_IPHONE
-/* csops is a public Darwin syscall used here only to observe the
- * CS_DEBUGGED bit set by an external JIT host such as StikDebug. */
-extern int csops(pid_t pid, unsigned int ops, void *useraddr, size_t usersize);
-#define GRAFT_CS_DEBUGGED 0x10000000u
-
-static int graft_process_is_debugged(void) {
-    int flags = 0;
-    return csops(getpid(), 0u, &flags, sizeof(flags)) == 0 &&
-           ((unsigned int)flags & GRAFT_CS_DEBUGGED) != 0u;
-}
-#endif
 #endif
 
 static size_t page_round(size_t size) {
@@ -41,12 +29,14 @@ graft_jit_status graft_jit_check(void) {
         errno = ENOTSUP;
         return GRAFT_JIT_STATUS_UNAVAILABLE;
     }
-    if (graft_process_is_debugged()) return GRAFT_JIT_STATUS_ENABLED;
 #endif
     graft_jit_region region = {0};
     if (graft_jit_alloc(4096, &region) == 0) {
+        int commit_result = graft_jit_commit(&region);
+        int commit_error = errno;
         graft_jit_free(&region);
-        return GRAFT_JIT_STATUS_ENABLED;
+        if (commit_result == 0) return GRAFT_JIT_STATUS_ENABLED;
+        errno = commit_error;
     }
     switch (errno) {
         case EACCES:
@@ -90,11 +80,11 @@ int graft_jit_alloc(size_t size, graft_jit_region *out_region) {
     int backend = 1; /* MAP_JIT */
 #if defined(__APPLE__) && TARGET_OS_IPHONE
     /* LiveContainer may re-sign a guest without the allow-jit entitlement.
-     * A StikDebug-attached process is nevertheless allowed to transition a
-     * private anonymous mapping from RW to RX (the public path used by
-     * Amethyst). Use it only after CS_DEBUGGED is observed; never weaken the
-     * mapping for an ordinary sandboxed process. */
-    if (base == MAP_FAILED && graft_process_is_debugged()) {
+     * Fall back to a private anonymous RW mapping and let commit() perform the
+     * public RW-to-RX capability check. An ordinary sandboxed process can
+     * allocate RW memory but will be rejected at the RX transition, so no
+     * private process-state API is required. */
+    if (base == MAP_FAILED) {
         flags = MAP_PRIVATE | MAP_ANON;
         base = mmap(NULL, size, PROT_READ | PROT_WRITE, flags, -1, 0);
         backend = 2; /* debugged anonymous RW -> RX */

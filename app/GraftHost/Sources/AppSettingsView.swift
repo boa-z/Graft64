@@ -12,7 +12,7 @@ struct AppSettingsView: View {
                     .foregroundStyle(.secondary)
             }
             Section("JIT provider") {
-                Text("JIT is supplied externally by the LiveContainer host (for example, StikDebug). GraftHost only observes public process state and MAP_JIT allocation; it never invokes a private JIT service.")
+                Text("JIT is supplied externally by the LiveContainer host (for example, StikDebug). GraftHost tests executable memory transitions with public APIs; it never invokes a private JIT service.")
                     .font(.footnote)
                     .foregroundStyle(.secondary)
             }

@@ -23,6 +23,7 @@ typedef enum graft_probe_reason_code {
     GRAFT_REASON_LIFECYCLE_WAITING = 5,
     GRAFT_REASON_PATH_CONTEXT_MISSING = 6,
     GRAFT_REASON_CHILD_PROCESS = 7,
+    GRAFT_REASON_PERMISSION = 8,
     GRAFT_REASON_INTERNAL = 255,
 } graft_probe_reason_code;
 

@@ -1,11 +1,13 @@
 #include "graft/graft_probe.h"
 #include "graft/graft_jit.h"
 #include <assert.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 
 static int count;
 static int helper_passed;
+static int missing_helper_checked;
 static void collect(const graft_probe_result *result, void *context) {
     (void)context;
     assert(result && result->name && result->summary && result->details_json);
@@ -13,6 +15,16 @@ static void collect(const graft_probe_result *result, void *context) {
     printf("%s %s: %s (%s)\n", graft_probe_status_name(result->status), result->name, result->summary, result->details_json);
     fflush(stdout);
     if (result->name[0] == 'h' && result->status == GRAFT_PROBE_PASS) ++helper_passed;
+}
+
+static void collect_missing_helper(const graft_probe_result *result, void *context) {
+    (void)context;
+    assert(result);
+    assert(strcmp(result->name, "helper_spawn") == 0);
+    assert(result->status == GRAFT_PROBE_FAIL);
+    assert(result->reason_code == GRAFT_REASON_CHILD_PROCESS);
+    assert(result->os_error == ENOENT);
+    missing_helper_checked = 1;
 }
 
 int main(int argc, char **argv) {
@@ -34,6 +46,9 @@ int main(int argc, char **argv) {
                                         GRAFT_JIT_CAP_ICACHE_INVALIDATE)) ==
            (GRAFT_JIT_CAP_ALLOCATE | GRAFT_JIT_CAP_WRITE |
             GRAFT_JIT_CAP_EXECUTE | GRAFT_JIT_CAP_ICACHE_INVALIDATE));
+    assert(graft_configure_helper("/definitely/missing/GraftProbeHelper") == 0);
+    assert(graft_run_probe("helper_spawn", collect_missing_helper, NULL) == 0);
+    assert(missing_helper_checked == 1);
     assert(graft_configure_helper(argv[1]) == 0);
     assert(graft_configure_dylib(argv[2]) == 0);
     assert(graft_run_all_probes(collect, NULL) == 0);

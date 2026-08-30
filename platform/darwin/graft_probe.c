@@ -90,6 +90,10 @@ int graft_lifecycle_note_foreground(void) {
 
 typedef int (*probe_fn)(char *summary, size_t summary_size, char *details, size_t details_size);
 typedef struct probe_entry { const char *name; probe_fn fn; } probe_entry;
+enum {
+    PROBE_INTERNAL_SKIP = -2,
+    PROBE_INTERNAL_BLOCKED = -3,
+};
 
 static void set_text(char *dst, size_t size, const char *fmt, ...) {
     va_list args; va_start(args, fmt); vsnprintf(dst, size, fmt, args); va_end(args);
@@ -133,7 +137,7 @@ static int runtime_paths(char *summary, size_t ss, char *details, size_t ds) {
     if (!g_guest_bundle_root[0] || !g_runtime_root[0] || !g_data_root[0] || !g_cache_root[0]) {
         set_text(summary, ss, "Explicit runtime path context is missing");
         set_text(details, ds, "{\"reason\":\"path_context_missing\",\"required\":[\"guest_bundle_root\",\"runtime_root\",\"data_root\",\"cache_root\"]}");
-        return 2;
+        return PROBE_INTERNAL_SKIP;
     }
     set_text(summary, ss, "Resolved explicit runtime path context");
     set_text(details, ds, "{\"source\":\"host_context\",\"guest_bundle_root\":\"%s\",\"runtime_root\":\"%s\",\"data_root\":\"%s\",\"cache_root\":\"%s\"}", g_guest_bundle_root, g_runtime_root, g_data_root, g_cache_root);
@@ -165,28 +169,29 @@ static int jit_call_42(void *base) {
 
 static int jit_basic(char *summary, size_t ss, char *details, size_t ds) {
 #if !defined(__aarch64__) && !defined(__arm64__)
-    set_text(summary, ss, "Requires an arm64 device"); set_text(details, ds, "{\"reason\":\"host architecture is not arm64\"}"); return 2;
+    set_text(summary, ss, "Requires an arm64 device"); set_text(details, ds, "{\"reason\":\"host architecture is not arm64\"}"); return PROBE_INTERNAL_SKIP;
 #else
-    graft_jit_region region = {0}; if (graft_jit_alloc(4096, &region) != 0) { int e = errno; set_text(summary, ss, "JIT allocation failed"); set_text(details, ds, "{\"errno\":%d,\"jit_enabled\":false}", e); return (e == EACCES || e == EPERM) ? 3 : e; }
+    graft_jit_region region = {0}; if (graft_jit_alloc(4096, &region) != 0) { int e = errno; set_text(summary, ss, "JIT allocation failed"); set_text(details, ds, "{\"errno\":%d,\"jit_enabled\":false}", e); return (e == EACCES || e == EPERM) ? PROBE_INTERNAL_BLOCKED : e; }
     uint32_t code[] = { 0x52800540u, 0xD65F03C0u }; memcpy(region.base, code, sizeof(code));
     int result = graft_jit_invalidate(&region, 0, sizeof(code)); int protect = graft_jit_commit(&region); int value = protect == 0 ? jit_call_42(region.base) : -1;
     int backend_kind = region.backend;
-    const char *backend = backend_kind == 2 ? "debugged_anonymous" : "MAP_JIT";
-    graft_jit_free(&region); if (result || protect || value != 42) { set_text(summary, ss, "JIT function did not return 42"); set_text(details, ds, "{\"invalidate\":%d,\"protect\":%d,\"value\":%d,\"errno\":%d,\"backend\":\"%s\"}", result, protect, value, errno, backend); return (protect == -1 && (errno == EACCES || errno == EPERM)) ? 3 : EACCES; }
+    const char *backend = backend_kind == 2 ? "anonymous_rw_rx" : "MAP_JIT";
+    int operation_error = errno;
+    graft_jit_free(&region); if (result || protect || value != 42) { set_text(summary, ss, "JIT function did not return 42"); set_text(details, ds, "{\"invalidate\":%d,\"protect\":%d,\"value\":%d,\"errno\":%d,\"backend\":\"%s\"}", result, protect, value, operation_error, backend); errno = operation_error; return (protect == -1 && (operation_error == EACCES || operation_error == EPERM)) ? PROBE_INTERNAL_BLOCKED : EACCES; }
     set_text(summary, ss, "Executed ARM64 JIT function"); set_text(details, ds, "{\"return_value\":42,\"backend\":\"%s\"}", backend); return 0;
 #endif
 }
 
 static int jit_write_protect(char *summary, size_t ss, char *details, size_t ds) {
 #if !defined(__aarch64__) && !defined(__arm64__)
-    set_text(summary, ss, "Requires an arm64 device"); set_text(details, ds, "{\"reason\":\"host architecture is not arm64\"}"); return 2;
+    set_text(summary, ss, "Requires an arm64 device"); set_text(details, ds, "{\"reason\":\"host architecture is not arm64\"}"); return PROBE_INTERNAL_SKIP;
 #else
     graft_jit_region region = {0};
     if (graft_jit_alloc(4096, &region) != 0) {
         int e = errno;
         set_text(summary, ss, "JIT write-protect allocation failed");
         set_text(details, ds, "{\"stage\":\"alloc\",\"os_error\":%d}", e);
-        return (e == EACCES || e == EPERM) ? 3 : e;
+        return (e == EACCES || e == EPERM) ? PROBE_INTERNAL_BLOCKED : e;
     }
     uint32_t code[] = { 0x52800020u, 0xD65F03C0u }; memcpy(region.base, code, sizeof(code)); graft_jit_invalidate(&region, 0, sizeof(code));
     int rx1 = graft_jit_commit(&region); int first = rx1 == 0 ? jit_call_42(region.base) : -1;
@@ -201,7 +206,7 @@ static void *jit_thread(void *opaque) { thread_arg *arg = (thread_arg *)opaque; 
 #endif
 static int jit_multithread(char *summary, size_t ss, char *details, size_t ds) {
 #if !defined(__aarch64__) && !defined(__arm64__)
-    set_text(summary, ss, "Requires an arm64 device"); set_text(details, ds, "{\"reason\":\"host architecture is not arm64\"}"); return 2;
+    set_text(summary, ss, "Requires an arm64 device"); set_text(details, ds, "{\"reason\":\"host architecture is not arm64\"}"); return PROBE_INTERNAL_SKIP;
 #else
     int basic_result = jit_basic(summary, ss, details, ds);
     if (basic_result != 0) return basic_result;
@@ -210,7 +215,7 @@ static int jit_multithread(char *summary, size_t ss, char *details, size_t ds) {
         int e = errno;
         set_text(summary, ss, "Multithread JIT allocation failed");
         set_text(details, ds, "{\"stage\":\"alloc\",\"os_error\":%d}", e);
-        return (e == EACCES || e == EPERM) ? 3 : e;
+        return (e == EACCES || e == EPERM) ? PROBE_INTERNAL_BLOCKED : e;
     }
     uint32_t code[] = { 0x52800540u, 0xD65F03C0u }; memcpy(region.base, code, sizeof(code)); graft_jit_invalidate(&region, 0, sizeof(code)); if (graft_jit_commit(&region) != 0) { graft_jit_free(&region); return EACCES; }
     pthread_t threads[4]; thread_arg args[4] = {{0}}; for (int i = 0; i < 4; ++i) { args[i].region = &region; pthread_create(&threads[i], NULL, jit_thread, &args[i]); }
@@ -265,7 +270,7 @@ static void *signal_worker(void *opaque) {
 #endif
 static int signal_resume(char *summary, size_t ss, char *details, size_t ds) {
 #if !defined(__aarch64__) && !defined(__arm64__)
-    set_text(summary, ss, "Requires an arm64 device"); set_text(details, ds, "{\"status\":\"unverified\",\"next_step\":\"Run on arm64 device and capture ucontext\"}"); return 2;
+    set_text(summary, ss, "Requires an arm64 device"); set_text(details, ds, "{\"status\":\"unverified\",\"next_step\":\"Run on arm64 device and capture ucontext\"}"); return PROBE_INTERNAL_SKIP;
 #else
     struct sigaction action = {0}, old_action = {0};
     action.sa_sigaction = signal_handler;
@@ -287,9 +292,9 @@ static int signal_resume(char *summary, size_t ss, char *details, size_t ds) {
 }
 static int dlopen_bundle(char *summary, size_t ss, char *details, size_t ds) {
 #if !defined(__APPLE__)
-    set_text(summary, ss, "Bundle dylib probe requires Darwin"); set_text(details, ds, "{\"status\":\"unverified\"}"); return 2;
+    set_text(summary, ss, "Bundle dylib probe requires Darwin"); set_text(details, ds, "{\"status\":\"unverified\"}"); return PROBE_INTERNAL_SKIP;
 #else
-    if (!g_dylib_path[0]) { set_text(summary, ss, "Bundle dylib path is not configured"); set_text(details, ds, "{\"status\":\"unverified\",\"next_step\":\"Configure GraftProbeTest.dylib path from app bundle\"}"); return 2; }
+    if (!g_dylib_path[0]) { set_text(summary, ss, "Bundle dylib path is not configured"); set_text(details, ds, "{\"status\":\"unverified\",\"next_step\":\"Configure GraftProbeTest.dylib path from app bundle\"}"); return PROBE_INTERNAL_SKIP; }
     void *handle = dlopen(g_dylib_path, RTLD_NOW | RTLD_LOCAL); if (!handle) { const char *error = dlerror(); set_text(summary, ss, "dlopen failed"); set_text(details, ds, "{\"path\":\"%s\",\"error\":\"%s\"}", g_dylib_path, error ? error : "unknown"); return EFAULT; }
     int (*value)(void) = (int (*)(void))dlsym(handle, "graft_probe_test_value"); const char *error = dlerror(); int result = value ? value() : -1; dlclose(handle); if (error || result != 64) { set_text(summary, ss, "dlsym validation failed"); set_text(details, ds, "{\"path\":\"%s\",\"return_value\":%d}", g_dylib_path, result); return EFAULT; }
     set_text(summary, ss, "Loaded and called bundled dylib"); set_text(details, ds, "{\"path\":\"%s\",\"return_value\":64}", g_dylib_path); return 0;
@@ -321,7 +326,7 @@ static int shared_mapping(char *summary, size_t ss, char *details, size_t ds) {
     return ok ? 0 : EIO;
 }
 static int helper_roundtrip(char *summary, size_t ss, char *details, size_t ds) {
-    if (!g_helper_path[0]) { set_text(summary, ss, "Bundled helper path is not configured"); set_text(details, ds, "{\"status\":\"unverified\",\"next_step\":\"Configure helper path from app bundle\"}"); return 2; }
+    if (!g_helper_path[0]) { set_text(summary, ss, "Bundled helper path is not configured"); set_text(details, ds, "{\"status\":\"unverified\",\"next_step\":\"Configure helper path from app bundle\"}"); return PROBE_INTERNAL_SKIP; }
     int fds[2];
     if (socketpair(AF_UNIX, SOCK_STREAM, 0, fds) != 0) { int e = errno; set_text(summary, ss, "Helper socketpair failed"); set_text(details, ds, "{\"stage\":\"socketpair\",\"os_error\":%d}", e); return e; }
     char shared_path[PATH_MAX];
@@ -407,7 +412,7 @@ static int lifecycle_jit(char *summary, size_t ss, char *details, size_t ds) {
         !atomic_load_explicit(&g_lifecycle_foreground_seen, memory_order_acquire)) {
         set_text(summary, ss, "Waiting for background/foreground transition");
         set_text(details, ds, "{\"status\":\"manual\",\"instructions\":\"Send the app to background and return to foreground; lifecycle_jit will run automatically\"}");
-        return 2;
+        return PROBE_INTERNAL_SKIP;
     }
     if (!atomic_load_explicit(&g_lifecycle_code_cache_ready, memory_order_acquire)) {
         set_text(summary, ss, "JIT code cache was not prepared before suspend");
@@ -439,9 +444,9 @@ const char *graft_probe_status_name(graft_probe_status status) { switch (status)
 static graft_probe_reason_code reason_for_result(const char *name, graft_probe_status status, int os_error) {
     if (status == GRAFT_PROBE_PASS) return GRAFT_REASON_NONE;
     if (status == GRAFT_PROBE_SKIP) return strcmp(name, "lifecycle_jit") == 0 ? GRAFT_REASON_LIFECYCLE_WAITING : GRAFT_REASON_NOT_SUPPORTED;
-    if (status == GRAFT_PROBE_BLOCKED || os_error == EACCES || os_error == EPERM)
-        return strncmp(name, "jit", 3) == 0 ? GRAFT_REASON_JIT_NOT_ENABLED : GRAFT_REASON_CHILD_PROCESS;
+    if (status == GRAFT_PROBE_BLOCKED) return GRAFT_REASON_JIT_NOT_ENABLED;
     if (strncmp(name, "helper", 6) == 0 && (os_error == ENOENT || os_error == ESRCH)) return GRAFT_REASON_CHILD_PROCESS;
+    if (os_error == EACCES || os_error == EPERM) return GRAFT_REASON_PERMISSION;
     if (os_error == EINVAL) return GRAFT_REASON_INVALID_ARGUMENT;
     if (os_error == EIO || os_error == EPIPE || os_error == ETIMEDOUT) return GRAFT_REASON_IO;
     if (strncmp(name, "helper", 6) == 0) return GRAFT_REASON_CHILD_PROCESS;
@@ -462,7 +467,8 @@ static const probe_entry *find_probe(const char *name) { for (size_t i = 0; i < 
 int graft_run_probe(const char *name, graft_probe_callback callback, void *context) {
     if (!name || !callback) { errno = EINVAL; return -1; } const probe_entry *entry = find_probe(name); if (!entry) { errno = ENOENT; return -1; }
     char summary[256] = {0}, details[2048] = {0}; struct timespec start = {0}, end = {0}; clock_gettime(CLOCK_MONOTONIC, &start); errno = 0; int rc = entry->fn(summary, sizeof(summary), details, sizeof(details)); int saved_errno = errno; clock_gettime(CLOCK_MONOTONIC, &end);
-    graft_probe_status status = rc == 0 ? GRAFT_PROBE_PASS : rc == 2 ? GRAFT_PROBE_SKIP : rc == 3 ? GRAFT_PROBE_BLOCKED : GRAFT_PROBE_FAIL;
-    graft_probe_result result = {.name = entry->name, .status = status, .reason_code = reason_for_result(entry->name, status, saved_errno), .graft_error = graft_error_for_result(status, saved_errno), .os_error = saved_errno, .duration_ns = (uint64_t)(end.tv_sec - start.tv_sec) * 1000000000ull + (uint64_t)(end.tv_nsec - start.tv_nsec), .summary = summary, .details_json = details}; callback(&result, context); return 0;
+    graft_probe_status status = rc == 0 ? GRAFT_PROBE_PASS : rc == PROBE_INTERNAL_SKIP ? GRAFT_PROBE_SKIP : rc == PROBE_INTERNAL_BLOCKED ? GRAFT_PROBE_BLOCKED : GRAFT_PROBE_FAIL;
+    int os_error = rc > 0 ? rc : saved_errno;
+    graft_probe_result result = {.name = entry->name, .status = status, .reason_code = reason_for_result(entry->name, status, os_error), .graft_error = graft_error_for_result(status, os_error), .os_error = os_error, .duration_ns = (uint64_t)(end.tv_sec - start.tv_sec) * 1000000000ull + (uint64_t)(end.tv_nsec - start.tv_nsec), .summary = summary, .details_json = details}; callback(&result, context); return 0;
 }
 int graft_run_all_probes(graft_probe_callback callback, void *context) { if (!callback) { errno = EINVAL; return -1; } for (size_t i = 0; i < sizeof(probes) / sizeof(probes[0]); ++i) if (graft_run_probe(probes[i].name, callback, context) != 0) return -1; return 0; }
