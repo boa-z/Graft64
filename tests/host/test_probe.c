@@ -44,6 +44,12 @@ static void collect(const graft_probe_result *result, void *context) {
         assert(result->status == GRAFT_PROBE_PASS);
         check_page_model_details(result->details_json);
     }
+    if (strcmp(result->name, "signal_resume") == 0 && result->status == GRAFT_PROBE_PASS) {
+        assert(strstr(result->details_json, "SIGSEGV") != NULL);
+        assert(strstr(result->details_json, "SIGBUS") != NULL);
+        assert(strstr(result->details_json, "\"main\"") != NULL);
+        assert(strstr(result->details_json, "\"worker\"") != NULL);
+    }
     if (strcmp(result->name, "runtime_paths") == 0) {
         assert(result->status == GRAFT_PROBE_PASS);
         assert(strstr(result->details_json, "\"source\":\"host_context\"") != NULL);

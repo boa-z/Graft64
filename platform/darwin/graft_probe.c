@@ -402,14 +402,20 @@ static int jit_multithread(char *summary, size_t ss, char *details, size_t ds) {
 #if defined(__aarch64__) || defined(__arm64__)
 static _Thread_local volatile sig_atomic_t g_fault_seen;
 static _Thread_local uintptr_t g_recovery_pc;
+static _Thread_local uintptr_t g_fault_pc;
+static _Thread_local uintptr_t g_fault_address;
+static _Thread_local int g_fault_signal;
 static void signal_handler(int signal_number, siginfo_t *info, void *context) {
-    (void)signal_number; (void)info;
+    g_fault_signal = signal_number;
+    g_fault_address = (uintptr_t)(info ? info->si_addr : 0);
     g_fault_seen = 1;
 #if defined(__aarch64__) || defined(__arm64__)
     ucontext_t *uc = (ucontext_t *)context;
 #if defined(__APPLE__)
+    g_fault_pc = (uintptr_t)uc->uc_mcontext->__ss.__pc;
     uc->uc_mcontext->__ss.__pc = (uint64_t)g_recovery_pc;
 #else
+    g_fault_pc = (uintptr_t)uc->uc_mcontext.pc;
     uc->uc_mcontext.pc = g_recovery_pc;
 #endif
 #else
@@ -417,7 +423,7 @@ static void signal_handler(int signal_number, siginfo_t *info, void *context) {
 #endif
 }
 
-static int signal_resume_once(void) {
+static int signal_resume_once(int expected_signal) {
     size_t stack_size = (size_t)SIGSTKSZ;
     void *stack = mmap(NULL, stack_size, PROT_READ | PROT_WRITE, MAP_PRIVATE | MAP_ANON, -1, 0);
     if (stack == MAP_FAILED) return errno;
@@ -425,21 +431,43 @@ static int signal_resume_once(void) {
     stack_t previous = {0};
     if (sigaltstack(&alt, &previous) != 0) { int e = errno; munmap(stack, stack_size); return e; }
     g_fault_seen = 0;
+    g_fault_signal = 0; g_fault_pc = 0; g_fault_address = 0;
     g_recovery_pc = (uintptr_t)&&recovered;
     int result = EFAULT;
-    volatile int *bad = (volatile int *)(uintptr_t)0x1;
-    *bad = 7;
+    if (expected_signal == SIGBUS) {
+        char path[] = "/tmp/graft64-signal-XXXXXX";
+        int fd = mkstemp(path);
+        if (fd < 0) { result = errno; goto cleanup; }
+        unlink(path);
+        size_t page = (size_t)getpagesize();
+        void *mapped = mmap(NULL, page, PROT_READ | PROT_WRITE, MAP_SHARED, fd, 0);
+        close(fd);
+        if (mapped == MAP_FAILED) { result = errno; goto cleanup; }
+        volatile unsigned char value = *((volatile unsigned char *)mapped);
+        (void)value;
+        munmap(mapped, page);
+    } else {
+        volatile int *bad = (volatile int *)(uintptr_t)0x1;
+        *bad = 7;
+    }
 recovered:
-    result = g_fault_seen ? 0 : EFAULT;
+    result = g_fault_seen && g_fault_signal == expected_signal ? 0 : EFAULT;
+cleanup:
     (void)sigaltstack(&previous, NULL);
     munmap(stack, stack_size);
     return result;
 }
 
-typedef struct signal_worker_result { int result; } signal_worker_result;
+typedef struct signal_worker_result { int result; int segv; int bus; uintptr_t address[2]; uintptr_t fault_pc[2]; uintptr_t recovery_pc[2]; } signal_worker_result;
 static void *signal_worker(void *opaque) {
     signal_worker_result *result = (signal_worker_result *)opaque;
-    result->result = signal_resume_once();
+    result->result = signal_resume_once(SIGSEGV);
+    result->segv = g_fault_signal == SIGSEGV;
+    result->address[0] = g_fault_address; result->fault_pc[0] = g_fault_pc; result->recovery_pc[0] = g_recovery_pc;
+    int bus_result = signal_resume_once(SIGBUS);
+    result->bus = g_fault_signal == SIGBUS;
+    result->address[1] = g_fault_address; result->fault_pc[1] = g_fault_pc; result->recovery_pc[1] = g_recovery_pc;
+    if (result->result == 0 && bus_result != 0) result->result = bus_result;
     return NULL;
 }
 #endif
@@ -451,18 +479,24 @@ static int signal_resume(char *summary, size_t ss, char *details, size_t ds) {
     action.sa_sigaction = signal_handler;
     sigemptyset(&action.sa_mask);
     action.sa_flags = SA_SIGINFO | SA_ONSTACK;
-    if (sigaction(SIGSEGV, &action, &old_action) != 0) return errno;
-    int main_result = signal_resume_once();
+    struct sigaction old_bus = {0};
+    if (sigaction(SIGSEGV, &action, &old_action) != 0 || sigaction(SIGBUS, &action, &old_bus) != 0) return errno;
+    signal_worker_result main = {0};
+    main.result = signal_resume_once(SIGSEGV);
+    main.segv = g_fault_signal == SIGSEGV; main.address[0] = g_fault_address; main.fault_pc[0] = g_fault_pc; main.recovery_pc[0] = g_recovery_pc;
+    int main_bus = signal_resume_once(SIGBUS);
+    main.bus = g_fault_signal == SIGBUS; main.address[1] = g_fault_address; main.fault_pc[1] = g_fault_pc; main.recovery_pc[1] = g_recovery_pc;
+    if (main.result == 0 && main_bus != 0) main.result = main_bus;
     signal_worker_result worker = {.result = EFAULT};
     pthread_t worker_thread;
     int worker_create = pthread_create(&worker_thread, NULL, signal_worker, &worker);
     if (worker_create == 0) pthread_join(worker_thread, NULL);
     else worker.result = worker_create;
-    int restore_result = sigaction(SIGSEGV, &old_action, NULL);
-    int ok = main_result == 0 && worker.result == 0 && restore_result == 0;
-    set_text(summary, ss, ok ? "SIGSEGV recovered through TLS ucontext (main and worker)" : "Fault handler did not recover on all threads");
-    set_text(details, ds, "{\"fault_signal\":\"SIGSEGV\",\"ucontext_pc_rewritten\":%s,\"worker_thread_fault_recovered\":%s,\"main_error\":%d,\"worker_error\":%d}", main_result == 0 ? "true" : "false", worker.result == 0 ? "true" : "false", main_result, worker.result);
-    return ok ? 0 : (main_result != 0 ? main_result : worker.result);
+    int restore_result = sigaction(SIGSEGV, &old_action, NULL) | sigaction(SIGBUS, &old_bus, NULL);
+    int ok = main.result == 0 && worker.result == 0 && restore_result == 0 && main.segv && main.bus && worker.segv && worker.bus;
+    set_text(summary, ss, ok ? "SIGSEGV/SIGBUS recovered through TLS ucontext (main and worker)" : "Fault handler did not recover all signals on all threads");
+    set_text(details, ds, "{\"signals\":[\"SIGSEGV\",\"SIGBUS\"],\"main\":{\"segv\":%s,\"bus\":%s,\"fault_address_segv\":%llu,\"fault_address_bus\":%llu,\"original_pc_segv\":%llu,\"original_pc_bus\":%llu,\"recovery_pc_segv\":%llu,\"recovery_pc_bus\":%llu},\"worker\":{\"segv\":%s,\"bus\":%s,\"fault_address_segv\":%llu,\"fault_address_bus\":%llu,\"original_pc_segv\":%llu,\"original_pc_bus\":%llu,\"recovery_pc_segv\":%llu,\"recovery_pc_bus\":%llu},\"main_error\":%d,\"worker_error\":%d}", main.segv ? "true" : "false", main.bus ? "true" : "false", (unsigned long long)main.address[0], (unsigned long long)main.address[1], (unsigned long long)main.fault_pc[0], (unsigned long long)main.fault_pc[1], (unsigned long long)main.recovery_pc[0], (unsigned long long)main.recovery_pc[1], worker.segv ? "true" : "false", worker.bus ? "true" : "false", (unsigned long long)worker.address[0], (unsigned long long)worker.address[1], (unsigned long long)worker.fault_pc[0], (unsigned long long)worker.fault_pc[1], (unsigned long long)worker.recovery_pc[0], (unsigned long long)worker.recovery_pc[1], main.result, worker.result);
+    return ok ? 0 : (main.result != 0 ? main.result : worker.result);
 #endif
 }
 static int dlopen_bundle(char *summary, size_t ss, char *details, size_t ds) {
