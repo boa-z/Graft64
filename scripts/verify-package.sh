@@ -13,6 +13,11 @@ test -x "$APP/GraftProbeHelper" || { echo "helper missing or not executable" >&2
 test -f "$APP/GraftProbeTest.dylib" || { echo "test dylib missing" >&2; exit 1; }
 test -f "$APP/Info.plist" || { echo "Info.plist missing" >&2; exit 1; }
 plutil -lint "$APP/Info.plist" >/dev/null
+EXECUTABLE_NAME_IN_PLIST="$(plutil -extract CFBundleExecutable raw "$APP/Info.plist")"
+test "$EXECUTABLE_NAME_IN_PLIST" = "GraftHost" || {
+  echo "Info.plist CFBundleExecutable must resolve to GraftHost (got: $EXECUTABLE_NAME_IN_PLIST)" >&2
+  exit 1
+}
 codesign_output="$OUT/entitlements.plist.tmp"
 if codesign -d --entitlements :- "$APP" > "$codesign_output" 2>&1 && grep -q '<plist' "$codesign_output"; then
   mv "$codesign_output" "$OUT/entitlements.plist"
