@@ -1,4 +1,34 @@
 schema_version: 1
-stage: GRAFT-0001
-dependencies: []
-notes: Wine and FEX are intentionally not fetched until G0 device feasibility is green.
+stage: GRAFT-0002
+policy: upstream-first
+toolchain:
+  container_base: ubuntu:24.04
+  architecture: linux/arm64
+  compiler: clang-18
+  cmake: "3.28 or newer"
+  ninja: "1.11 or newer"
+  llvm_mingw:
+    version: 20260826
+    archive: https://github.com/mstorsjo/llvm-mingw/releases/download/20260826/llvm-mingw-20260826-ucrt-ubuntu-22.04-aarch64.tar.xz
+    archive_sha256: 4eb475cccf5e5e37ea3b693a52227e70a86ae70abafceb9ecd83887e67699c9d
+dependencies:
+  - name: wine
+    repository: https://github.com/wine-mirror/wine.git
+    ref: wine-10.0
+    commit: 2e9cb99369e5ead9d7fe9836dcd43c05e42890bc
+    archive: https://github.com/wine-mirror/wine/archive/2e9cb99369e5ead9d7fe9836dcd43c05e42890bc.tar.gz
+    archive_sha256: 6f5bd070406ae658113beee97a30a7b4d327ff2cdb93f7478e4e670cdf6d08d3
+    license: LGPL-2.1-or-later
+    role: arm64x-arm64ec-wine
+  - name: fex
+    repository: https://github.com/FEX-Emu/FEX.git
+    ref: FEX-2607
+    commit: 6efd1c099193bba708b68395738a31e9e5409e9a
+    archive: https://github.com/FEX-Emu/FEX/archive/6efd1c099193bba708b68395738a31e9e5409e9a.tar.gz
+    archive_sha256: 42944748c9f18420e09f387ccf26af6c4ce32677a7069577c63fa7668c0b6746
+    license: MIT
+    role: arm64ec-emulator-module
+notes:
+  - G0 device feasibility remains a required gate before shipping runtime artifacts.
+  - No private Wine/FEX patches are applied by this baseline.
+  - Archive hashes are for the commit-addressed GitHub source archives.
