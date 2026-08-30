@@ -153,11 +153,13 @@ static int jit_basic(char *summary, size_t ss, char *details, size_t ds) {
 #if !defined(__aarch64__) && !defined(__arm64__)
     set_text(summary, ss, "Requires an arm64 device"); set_text(details, ds, "{\"reason\":\"host architecture is not arm64\"}"); return 2;
 #else
-    graft_jit_region region = {0}; if (graft_jit_alloc(4096, &region) != 0) { int e = errno; set_text(summary, ss, "MAP_JIT allocation failed"); set_text(details, ds, "{\"errno\":%d,\"jit_enabled\":false}", e); return (e == EACCES || e == EPERM) ? 3 : e; }
+    graft_jit_region region = {0}; if (graft_jit_alloc(4096, &region) != 0) { int e = errno; set_text(summary, ss, "JIT allocation failed"); set_text(details, ds, "{\"errno\":%d,\"jit_enabled\":false}", e); return (e == EACCES || e == EPERM) ? 3 : e; }
     uint32_t code[] = { 0x52800540u, 0xD65F03C0u }; memcpy(region.base, code, sizeof(code));
     int result = graft_jit_invalidate(&region, 0, sizeof(code)); int protect = graft_jit_commit(&region); int value = protect == 0 ? jit_call_42(region.base) : -1;
+    int backend_kind = region.backend;
     graft_jit_free(&region); if (result || protect || value != 42) { set_text(summary, ss, "JIT function did not return 42"); set_text(details, ds, "{\"invalidate\":%d,\"protect\":%d,\"value\":%d,\"errno\":%d}", result, protect, value, errno); return (protect == -1 && (errno == EACCES || errno == EPERM)) ? 3 : EACCES; }
-    set_text(summary, ss, "Executed ARM64 JIT function"); set_text(details, ds, "{\"return_value\":42,\"backend\":\"MAP_JIT\"}"); return 0;
+    const char *backend = backend_kind == 2 ? "debugged_anonymous" : "MAP_JIT";
+    set_text(summary, ss, "Executed ARM64 JIT function"); set_text(details, ds, "{\"return_value\":42,\"backend\":\"%s\"}", backend); return 0;
 #endif
 }
 

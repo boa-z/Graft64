@@ -87,10 +87,23 @@ int graft_jit_alloc(size_t size, graft_jit_region *out_region) {
     protection |= PROT_EXEC;
 #endif
     void *base = mmap(NULL, size, protection, flags, -1, 0);
+    int backend = 1; /* MAP_JIT */
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    /* LiveContainer may re-sign a guest without the allow-jit entitlement.
+     * A StikDebug-attached process is nevertheless allowed to transition a
+     * private anonymous mapping from RW to RX (the public path used by
+     * Amethyst). Use it only after CS_DEBUGGED is observed; never weaken the
+     * mapping for an ordinary sandboxed process. */
+    if (base == MAP_FAILED && graft_process_is_debugged()) {
+        flags = MAP_PRIVATE | MAP_ANON;
+        base = mmap(NULL, size, PROT_READ | PROT_WRITE, flags, -1, 0);
+        backend = 2; /* debugged anonymous RW -> RX */
+    }
+#endif
     if (base == MAP_FAILED) { return -1; }
     out_region->base = base;
     out_region->size = size;
-    out_region->backend = 1;
+    out_region->backend = backend;
     return 0;
 }
 
