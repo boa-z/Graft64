@@ -111,12 +111,17 @@ final class ProbeStore {
 
     func noteBackground() {
         backgroundObserved = true
-        _ = graft_lifecycle_note_background()
+        if graft_lifecycle_note_background() != 0 {
+            logText += "\nLifecycle JIT preparation failed (OS error \(errno))."
+        }
     }
 
     func noteForeground() {
         guard backgroundObserved, !isRunning else { return }
-        guard graft_lifecycle_note_foreground() == 0 else { return }
+        guard graft_lifecycle_note_foreground() == 0 else {
+            logText += "\nLifecycle foreground notification failed (OS error \(errno))."
+            return
+        }
         isRunning = true
         let context = Unmanaged.passUnretained(self).toOpaque()
         _ = graft_run_probe("lifecycle_jit", Self.callback, context)

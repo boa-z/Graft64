@@ -48,6 +48,7 @@ static atomic_bool g_lifecycle_background_seen;
 static atomic_bool g_lifecycle_foreground_seen;
 static graft_jit_region g_lifecycle_code_cache;
 static atomic_bool g_lifecycle_code_cache_ready;
+static atomic_int g_lifecycle_prepare_error;
 int graft_configure_helper(const char *path) {
     if (!path || strlen(path) >= sizeof(g_helper_path)) { errno = EINVAL; return -1; }
     strcpy(g_helper_path, path); return 0;
@@ -106,19 +107,34 @@ int graft_lifecycle_note_background(void) {
      * execute this existing cache, proving suspend/resume preservation. */
     if (!atomic_load_explicit(&g_lifecycle_code_cache_ready, memory_order_acquire)) {
         uint32_t code[] = { 0x52800540u, 0xD65F03C0u }; /* mov w0,#42; ret */
-        if (graft_jit_alloc(4096, &g_lifecycle_code_cache) != 0) return -1;
+        if (graft_jit_alloc(4096, &g_lifecycle_code_cache) != 0) {
+            int e = errno;
+            atomic_store_explicit(&g_lifecycle_prepare_error, e, memory_order_release);
+            atomic_store_explicit(&g_lifecycle_background_seen, true, memory_order_release);
+            errno = e;
+            return -1;
+        }
         if (graft_jit_begin_write(&g_lifecycle_code_cache) != 0) {
+            int e = errno;
             graft_jit_free(&g_lifecycle_code_cache);
+            atomic_store_explicit(&g_lifecycle_prepare_error, e, memory_order_release);
+            atomic_store_explicit(&g_lifecycle_background_seen, true, memory_order_release);
+            errno = e;
             return -1;
         }
         memcpy(g_lifecycle_code_cache.base, code, sizeof(code));
         if (graft_jit_invalidate(&g_lifecycle_code_cache, 0, sizeof(code)) != 0 ||
             graft_jit_commit(&g_lifecycle_code_cache) != 0) {
+            int e = errno;
             graft_jit_free(&g_lifecycle_code_cache);
+            atomic_store_explicit(&g_lifecycle_prepare_error, e, memory_order_release);
+            atomic_store_explicit(&g_lifecycle_background_seen, true, memory_order_release);
+            errno = e;
             return -1;
         }
         atomic_store_explicit(&g_lifecycle_code_cache_ready, true, memory_order_release);
     }
+    atomic_store_explicit(&g_lifecycle_prepare_error, 0, memory_order_release);
     atomic_store_explicit(&g_lifecycle_background_seen, true, memory_order_release);
     return 0;
 }
@@ -658,6 +674,14 @@ static int lifecycle_jit(char *summary, size_t ss, char *details, size_t ds) {
         set_text(summary, ss, "Waiting for background/foreground transition");
         set_text(details, ds, "{\"status\":\"manual\",\"instructions\":\"Send the app to background and return to foreground; lifecycle_jit will run automatically\"}");
         return PROBE_INTERNAL_SKIP;
+    }
+    int prepare_error = atomic_load_explicit(&g_lifecycle_prepare_error, memory_order_acquire);
+    if (prepare_error != 0) {
+        set_text(summary, ss, "JIT code cache preparation failed before suspend");
+        set_text(details, ds, "{\"status\":\"fail\",\"stage\":\"prepare_before_suspend\",\"cache_reused\":false,\"os_error\":%d}", prepare_error);
+        errno = prepare_error;
+        return (prepare_error == EACCES || prepare_error == EPERM)
+                   ? PROBE_INTERNAL_BLOCKED : prepare_error;
     }
     if (!atomic_load_explicit(&g_lifecycle_code_cache_ready, memory_order_acquire)) {
         set_text(summary, ss, "JIT code cache was not prepared before suspend");
