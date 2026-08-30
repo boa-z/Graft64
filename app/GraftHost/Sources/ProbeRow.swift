@@ -14,7 +14,16 @@ struct ProbeRow: View {
                     .disabled(result.status == .pass && result.name == "runtime_paths")
             }
             Text(result.summary).font(.subheadline).foregroundStyle(.secondary)
-            if result.systemError != 0 { Text("errno: \(result.systemError)").font(.caption).foregroundStyle(.secondary) }
+            if result.reasonCode != 0 || result.graftError != 0 {
+                Text("reason: \(result.reasonCode) · graft: \(result.graftError)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if result.osError != 0 {
+                Text("OS error: \(result.osError)")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
         }
         .padding(.vertical, 6)
     }

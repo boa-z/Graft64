@@ -537,7 +537,9 @@ typedef enum graft_probe_status {
 typedef struct graft_probe_result {
     const char *name;
     graft_probe_status status;
-    int system_error;
+    graft_probe_reason_code reason_code;
+    graft_error_code graft_error;
+    int os_error;
     uint64_t duration_ns;
     const char *summary;
     const char *details_json;

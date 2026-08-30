@@ -74,7 +74,13 @@ int graft_jit_alloc(size_t size, graft_jit_region *out_region) {
 #if defined(__APPLE__)
     flags |= MAP_JIT;
 #endif
-    void *base = mmap(NULL, size, PROT_READ | PROT_WRITE, flags, -1, 0);
+    /* iOS requires executable permission on the initial MAP_JIT mapping;
+     * writes are still constrained by begin_write/commit W^X transitions. */
+    int protection = PROT_READ | PROT_WRITE;
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    protection |= PROT_EXEC;
+#endif
+    void *base = mmap(NULL, size, protection, flags, -1, 0);
     if (base == MAP_FAILED) { return -1; }
     out_region->base = base;
     out_region->size = size;
@@ -90,7 +96,7 @@ int graft_jit_begin_write(graft_jit_region *region) {
     return mprotect(region->base, region->size, PROT_READ | PROT_WRITE);
 }
 
-int graft_jit_end_write(graft_jit_region *region) {
+int graft_jit_commit(graft_jit_region *region) {
     if (!region || !region->base) { errno = EINVAL; return -1; }
     int result = mprotect(region->base, region->size, PROT_READ | PROT_EXEC);
 #if defined(__APPLE__) && !TARGET_OS_IPHONE
@@ -99,7 +105,21 @@ int graft_jit_end_write(graft_jit_region *region) {
     return result;
 }
 
-int graft_jit_invalidate_icache(graft_jit_region *region, size_t offset, size_t size) {
+int graft_jit_end_write(graft_jit_region *region) {
+    return graft_jit_commit(region);
+}
+
+unsigned int graft_jit_capabilities(void) {
+#if defined(__APPLE__)
+    return GRAFT_JIT_CAP_ALLOCATE | GRAFT_JIT_CAP_WRITE |
+           GRAFT_JIT_CAP_EXECUTE | GRAFT_JIT_CAP_ICACHE_INVALIDATE;
+#else
+    return GRAFT_JIT_CAP_ALLOCATE | GRAFT_JIT_CAP_WRITE |
+           GRAFT_JIT_CAP_EXECUTE | GRAFT_JIT_CAP_ICACHE_INVALIDATE;
+#endif
+}
+
+int graft_jit_invalidate(graft_jit_region *region, size_t offset, size_t size) {
     if (!region || !region->base || offset > region->size || size > region->size - offset) {
         errno = EINVAL; return -1;
     }
@@ -110,6 +130,10 @@ int graft_jit_invalidate_icache(graft_jit_region *region, size_t offset, size_t 
                             (char *)region->base + offset + size);
 #endif
     return 0;
+}
+
+int graft_jit_invalidate_icache(graft_jit_region *region, size_t offset, size_t size) {
+    return graft_jit_invalidate(region, offset, size);
 }
 
 void graft_jit_free(graft_jit_region *region) {

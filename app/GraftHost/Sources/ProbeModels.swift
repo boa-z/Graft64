@@ -11,24 +11,30 @@ struct ProbeResultModel: Identifiable, Codable, Hashable {
     let id: String
     let name: String
     let status: ProbeStatus
-    let systemError: Int32
+    let reasonCode: Int32
+    let graftError: Int32
+    let osError: Int32
     let durationNanoseconds: UInt64
     let summary: String
     let detailsJSON: String
 
     enum CodingKeys: String, CodingKey {
         case id, name, status
-        case systemError = "system_error"
+        case reasonCode = "reason_code"
+        case graftError = "graft_error"
+        case osError = "os_error"
         case durationNanoseconds = "duration_nanoseconds"
         case summary
         case detailsJSON = "details_json"
     }
 
-    init(name: String, status: ProbeStatus, systemError: Int32, durationNanoseconds: UInt64, summary: String, detailsJSON: String) {
+    init(name: String, status: ProbeStatus, reasonCode: Int32, graftError: Int32, osError: Int32, durationNanoseconds: UInt64, summary: String, detailsJSON: String) {
         self.id = name
         self.name = name
         self.status = status
-        self.systemError = systemError
+        self.reasonCode = reasonCode
+        self.graftError = graftError
+        self.osError = osError
         self.durationNanoseconds = durationNanoseconds
         self.summary = summary
         self.detailsJSON = detailsJSON

@@ -12,6 +12,23 @@ final class ProbeStore {
     private var backgroundObserved = false
 
     init() {
+        let bundleRoot = Bundle.main.bundleURL.path
+        let runtimeRoot = bundleRoot
+        let dataRoot = URL.documentsDirectory.appending(path: "Graft64", directoryHint: .isDirectory).path
+        let cacheRoot = URL.cachesDirectory.appending(path: "Graft64", directoryHint: .isDirectory).path
+        bundleRoot.withCString { guest in
+            runtimeRoot.withCString { runtime in
+                dataRoot.withCString { data in
+                    cacheRoot.withCString { cache in
+                        var context = graft_path_context(guest_bundle_root: guest,
+                                                          runtime_root: runtime,
+                                                          data_root: data,
+                                                          cache_root: cache)
+                        _ = graft_configure_path_context(&context)
+                    }
+                }
+            }
+        }
         if let helperURL = Bundle.main.url(forResource: "GraftProbeHelper", withExtension: nil) {
             _ = graft_configure_helper(helperURL.path)
         }
@@ -68,7 +85,7 @@ final class ProbeStore {
 
     func exportReport() {
         let report = DeviceReport(
-            schemaVersion: 1,
+            schemaVersion: 2,
             appVersion: AppInfo.version,
             buildCommit: AppInfo.commit,
             timestampUTC: .now,
@@ -106,7 +123,7 @@ final class ProbeStore {
         let summary = String(cString: result.pointee.summary)
         let details = String(cString: result.pointee.details_json)
         let status: ProbeStatus = switch result.pointee.status { case GRAFT_PROBE_PASS: .pass; case GRAFT_PROBE_FAIL: .fail; case GRAFT_PROBE_BLOCKED: .blocked; default: .skip }
-        let updated = ProbeResultModel(name: name, status: status, systemError: result.pointee.system_error, durationNanoseconds: result.pointee.duration_ns, summary: summary, detailsJSON: details)
+        let updated = ProbeResultModel(name: name, status: status, reasonCode: Int32(result.pointee.reason_code.rawValue), graftError: Int32(result.pointee.graft_error.rawValue), osError: result.pointee.os_error, durationNanoseconds: result.pointee.duration_ns, summary: summary, detailsJSON: details)
         if let index = results.firstIndex(where: { $0.id == updated.id }) {
             results[index] = updated
         } else {

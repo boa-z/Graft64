@@ -21,6 +21,19 @@ int main(int argc, char **argv) {
     assert(strcmp(graft_jit_status_name(GRAFT_JIT_STATUS_ENABLED), "enabled") == 0);
     assert(strcmp(graft_jit_status_name(GRAFT_JIT_STATUS_DISABLED), "disabled") == 0);
     assert(strcmp(graft_jit_status_name(GRAFT_JIT_STATUS_UNAVAILABLE), "unavailable") == 0);
+    const graft_path_context paths = {
+        .guest_bundle_root = "/tmp/graft64-bundle",
+        .runtime_root = "/tmp/graft64-runtime",
+        .data_root = "/tmp/graft64-data",
+        .cache_root = "/tmp/graft64-cache",
+    };
+    assert(graft_configure_path_context(&paths) == 0);
+    assert((graft_jit_capabilities() & (GRAFT_JIT_CAP_ALLOCATE |
+                                        GRAFT_JIT_CAP_WRITE |
+                                        GRAFT_JIT_CAP_EXECUTE |
+                                        GRAFT_JIT_CAP_ICACHE_INVALIDATE)) ==
+           (GRAFT_JIT_CAP_ALLOCATE | GRAFT_JIT_CAP_WRITE |
+            GRAFT_JIT_CAP_EXECUTE | GRAFT_JIT_CAP_ICACHE_INVALIDATE));
     assert(graft_configure_helper(argv[1]) == 0);
     assert(graft_configure_dylib(argv[2]) == 0);
     assert(graft_run_all_probes(collect, NULL) == 0);

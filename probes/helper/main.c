@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/mman.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #include <time.h>
 
@@ -17,12 +19,34 @@ int main(int argc, char **argv) {
     long parsed_fd = strtol(argv[1], &end, 10);
     if (!end || *end != '\0' || parsed_fd < 0 || parsed_fd > 1024) return 64;
     int fd = (int)parsed_fd;
+    int shared_fd = -1;
+    size_t shared_size = 0;
+    graft_helper_shared_state *shared = NULL;
+    if (argc >= 4) {
+        char *shared_end = NULL;
+        long parsed_shared_fd = strtol(argv[2], &shared_end, 10);
+        if (!shared_end || *shared_end != '\0' || parsed_shared_fd < 0 || parsed_shared_fd > 1024) return 64;
+        shared_fd = (int)parsed_shared_fd;
+        char *size_end = NULL;
+        unsigned long long parsed_size = strtoull(argv[3], &size_end, 10);
+        if (!size_end || *size_end != '\0' || parsed_size < sizeof(*shared)) return 64;
+        shared_size = (size_t)parsed_size;
+        shared = mmap(NULL, shared_size, PROT_READ | PROT_WRITE, MAP_SHARED, shared_fd, 0);
+        if (shared == MAP_FAILED) return 64;
+    }
+    const uint64_t helper_magic = 0x4752414654484c50ull;
     for (;;) {
         graft_msg_header header;
         if (read_full(fd, &header, sizeof(header)) != 0 || graft_ipc_validate_header(&header) != 0) return 65;
         unsigned char payload[GRAFT_IPC_MAX_PAYLOAD];
         if (header.payload_size && read_full(fd, payload, header.payload_size) != 0) return 66;
         graft_helper_hello_payload hello = {(int64_t)getpid(), (uint64_t)getpagesize(), ((uint64_t)getpid() << 32) ^ (uint64_t)time(NULL)};
+        if (shared) {
+            shared->helper_magic = helper_magic;
+            shared->helper_pid = (uint64_t)getpid();
+            shared->heartbeat++;
+            __sync_synchronize();
+        }
         uint32_t response_size = header.type == GRAFT_IPC_HELLO ? (uint32_t)sizeof(hello) : 0;
         graft_msg_header response = {GRAFT_IPC_MAGIC, GRAFT_IPC_VERSION, GRAFT_IPC_PONG, response_size, header.request_id};
         if (header.type == GRAFT_IPC_HELLO) response.type = GRAFT_IPC_HELLO;
@@ -31,5 +55,7 @@ int main(int argc, char **argv) {
         if (response_size && write_full(fd, &hello, sizeof(hello)) != 0) return 68;
         if (header.type == GRAFT_IPC_SHUTDOWN) break;
     }
+    if (shared) munmap(shared, shared_size);
+    if (shared_fd >= 0) close(shared_fd);
     close(fd); return 0;
 }

@@ -1,1 +1,1 @@
-{"schema_version":1,"app_version":"0.1","build_commit":"test","timestamp_utc":"2026-08-30T00:00:00Z","device":{"model":"Test","system_name":"iOS","system_version":"17.4","machine":"arm64","page_size":16384},"environment":{"livecontainer_detected":false,"jit_expected":true},"probes":[]}
+{"schema_version":2,"app_version":"0.1","build_commit":"test","timestamp_utc":"2026-08-30T00:00:00Z","device":{"model":"Test","system_name":"iOS","system_version":"17.4","machine":"arm64","page_size":16384},"environment":{"livecontainer_detected":false,"jit_expected":true},"probes":[]}
