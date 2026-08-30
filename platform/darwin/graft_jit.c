@@ -4,6 +4,7 @@
 #include <sys/mman.h>
 #include <sys/types.h>
 #include <unistd.h>
+#include <string.h>
 
 #if defined(__APPLE__)
 #include <pthread.h>
@@ -11,6 +12,17 @@
 #include <libkern/OSCacheControl.h>
 #ifndef MAP_JIT
 #define MAP_JIT 0x800
+#endif
+
+typedef struct graft_jit_copy_context { graft_jit_region *region; size_t offset; const void *data; size_t size; } graft_jit_copy_context;
+#if defined(__APPLE__) && defined(TARGET_OS_IPHONE)
+static int graft_jit_copy_callback(void *opaque) {
+    graft_jit_copy_context *copy = opaque;
+    if (!copy || !copy->region || !copy->region->base || !copy->data || copy->offset > copy->region->size || copy->size > copy->region->size - copy->offset) return EINVAL;
+    memcpy((char *)copy->region->base + copy->offset, copy->data, copy->size);
+    return 0;
+}
+PTHREAD_JIT_WRITE_ALLOW_CALLBACKS_NP(graft_jit_copy_callback);
 #endif
 
 #endif
@@ -103,6 +115,19 @@ int graft_jit_begin_write(graft_jit_region *region) {
     pthread_jit_write_protect_np(0);
 #endif
     return mprotect(region->base, region->size, PROT_READ | PROT_WRITE);
+}
+
+int graft_jit_write(graft_jit_region *region, size_t offset, const void *data, size_t size) {
+    if (!region || !region->base || !data || offset > region->size || size > region->size - offset) { errno = EINVAL; return -1; }
+    graft_jit_copy_context copy = {region, offset, data, size};
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    if (region->backend == 1) return pthread_jit_write_with_callback_np(graft_jit_copy_callback, &copy);
+#else
+    (void)copy;
+#endif
+    if (graft_jit_begin_write(region) != 0) return -1;
+    memcpy((char *)region->base + offset, data, size);
+    return 0;
 }
 
 int graft_jit_commit(graft_jit_region *region) {

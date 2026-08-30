@@ -50,6 +50,10 @@ static void collect(const graft_probe_result *result, void *context) {
         assert(strstr(result->details_json, "\"main\"") != NULL);
         assert(strstr(result->details_json, "\"worker\"") != NULL);
     }
+    if (strcmp(result->name, "jit_multithread") == 0 && result->status == GRAFT_PROBE_PASS) {
+        assert(strstr(result->details_json, "\"writer_thread_transition\":true") != NULL);
+        assert(strstr(result->details_json, "\"backend\":") != NULL);
+    }
     if (strcmp(result->name, "runtime_paths") == 0) {
         assert(result->status == GRAFT_PROBE_PASS);
         assert(strstr(result->details_json, "\"source\":\"host_context\"") != NULL);

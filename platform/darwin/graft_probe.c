@@ -122,8 +122,8 @@ int graft_lifecycle_note_background(void) {
             errno = e;
             return -1;
         }
-        memcpy(g_lifecycle_code_cache.base, code, sizeof(code));
-        if (graft_jit_invalidate(&g_lifecycle_code_cache, 0, sizeof(code)) != 0 ||
+        if (graft_jit_write(&g_lifecycle_code_cache, 0, code, sizeof(code)) != 0 ||
+            graft_jit_invalidate(&g_lifecycle_code_cache, 0, sizeof(code)) != 0 ||
             graft_jit_commit(&g_lifecycle_code_cache) != 0) {
             int e = errno;
             graft_jit_free(&g_lifecycle_code_cache);
@@ -362,7 +362,8 @@ static int jit_basic(char *summary, size_t ss, char *details, size_t ds) {
     set_text(summary, ss, "Requires an arm64 device"); set_text(details, ds, "{\"reason\":\"host architecture is not arm64\"}"); return PROBE_INTERNAL_SKIP;
 #else
     graft_jit_region region = {0}; if (graft_jit_alloc(4096, &region) != 0) { int e = errno; set_text(summary, ss, "JIT allocation failed"); set_text(details, ds, "{\"errno\":%d,\"jit_enabled\":false}", e); return (e == EACCES || e == EPERM) ? PROBE_INTERNAL_BLOCKED : e; }
-    uint32_t code[] = { 0x52800540u, 0xD65F03C0u }; memcpy(region.base, code, sizeof(code));
+    uint32_t code[] = { 0x52800540u, 0xD65F03C0u };
+    if (graft_jit_write(&region, 0, code, sizeof(code)) != 0) { graft_jit_free(&region); return errno; }
     int result = graft_jit_invalidate(&region, 0, sizeof(code)); int protect = graft_jit_commit(&region); int value = protect == 0 ? jit_call_42(region.base) : -1;
     int backend_kind = region.backend;
     const char *backend = backend_kind == 2 ? "anonymous_rw_rx" : "MAP_JIT";
@@ -383,16 +384,17 @@ static int jit_write_protect(char *summary, size_t ss, char *details, size_t ds)
         set_text(details, ds, "{\"stage\":\"alloc\",\"os_error\":%d}", e);
         return (e == EACCES || e == EPERM) ? PROBE_INTERNAL_BLOCKED : e;
     }
-    uint32_t code[] = { 0x52800020u, 0xD65F03C0u }; memcpy(region.base, code, sizeof(code)); graft_jit_invalidate(&region, 0, sizeof(code));
+    uint32_t code[] = { 0x52800020u, 0xD65F03C0u }; if (graft_jit_write(&region, 0, code, sizeof(code)) != 0) { graft_jit_free(&region); return errno; } graft_jit_invalidate(&region, 0, sizeof(code));
     int rx1 = graft_jit_commit(&region); int first = rx1 == 0 ? jit_call_42(region.base) : -1;
-    int rw = graft_jit_begin_write(&region); code[0] = 0x52800140u; memcpy(region.base, code, sizeof(code)); graft_jit_invalidate(&region, 0, sizeof(code)); int rx2 = graft_jit_commit(&region); int second = rx2 == 0 ? jit_call_42(region.base) : -1;
+    code[0] = 0x52800140u; int rw = graft_jit_write(&region, 0, code, sizeof(code)); graft_jit_invalidate(&region, 0, sizeof(code)); int rx2 = graft_jit_commit(&region); int second = rx2 == 0 ? jit_call_42(region.base) : -1;
     graft_jit_free(&region); set_text(summary, ss, "JIT write/execute transitions completed"); set_text(details, ds, "{\"first\":%d,\"second\":%d,\"begin_write\":%d}", first, second, rw); return (first == 1 && second == 10 && rw == 0) ? 0 : EACCES;
 #endif
 }
 
-typedef struct thread_arg { graft_jit_region *region; int failures; } thread_arg;
+typedef struct thread_arg { graft_jit_region *region; int failures; int expected; } thread_arg;
 #if defined(__aarch64__) || defined(__arm64__)
-static void *jit_thread(void *opaque) { thread_arg *arg = (thread_arg *)opaque; for (int i = 0; i < 1000; ++i) { if (jit_call_42(arg->region->base) != 42) arg->failures++; } return NULL; }
+static void *jit_thread(void *opaque) { thread_arg *arg = (thread_arg *)opaque; for (int i = 0; i < 1000; ++i) { if (jit_call_42(arg->region->base) != arg->expected) arg->failures++; } return NULL; }
+static void *jit_writer_thread(void *opaque) { thread_arg *arg = opaque; uint32_t code[] = {0x52800140u, 0xD65F03C0u}; if (graft_jit_write(arg->region, 0, code, sizeof(code)) != 0 || graft_jit_invalidate(arg->region, 0, sizeof(code)) != 0 || graft_jit_commit(arg->region) != 0) arg->failures = 1; return NULL; }
 #endif
 static int jit_multithread(char *summary, size_t ss, char *details, size_t ds) {
 #if !defined(__aarch64__) && !defined(__arm64__)
@@ -407,10 +409,12 @@ static int jit_multithread(char *summary, size_t ss, char *details, size_t ds) {
         set_text(details, ds, "{\"stage\":\"alloc\",\"os_error\":%d}", e);
         return (e == EACCES || e == EPERM) ? PROBE_INTERNAL_BLOCKED : e;
     }
-    uint32_t code[] = { 0x52800540u, 0xD65F03C0u }; memcpy(region.base, code, sizeof(code)); graft_jit_invalidate(&region, 0, sizeof(code)); if (graft_jit_commit(&region) != 0) { graft_jit_free(&region); return EACCES; }
-    pthread_t threads[4]; thread_arg args[4] = {{0}}; for (int i = 0; i < 4; ++i) { args[i].region = &region; pthread_create(&threads[i], NULL, jit_thread, &args[i]); }
+    uint32_t code[] = { 0x52800540u, 0xD65F03C0u }; if (graft_jit_write(&region, 0, code, sizeof(code)) != 0) { graft_jit_free(&region); return errno; } graft_jit_invalidate(&region, 0, sizeof(code)); if (graft_jit_commit(&region) != 0) { graft_jit_free(&region); return EACCES; }
+    int backend = region.backend;
+    thread_arg writer = {.region = &region}; pthread_t writer_thread; pthread_create(&writer_thread, NULL, jit_writer_thread, &writer); pthread_join(writer_thread, NULL);
+    pthread_t threads[4]; thread_arg args[4] = {{0}}; for (int i = 0; i < 4; ++i) { args[i].region = &region; args[i].expected = 10; pthread_create(&threads[i], NULL, jit_thread, &args[i]); }
     int failures = 0; for (int i = 0; i < 4; ++i) { pthread_join(threads[i], NULL); failures += args[i].failures; } graft_jit_free(&region);
-    set_text(summary, ss, "Four-thread JIT execution completed"); set_text(details, ds, "{\"threads\":4,\"iterations_per_thread\":1000,\"failures\":%d}", failures); return failures ? EIO : 0;
+    failures += writer.failures; set_text(summary, ss, "Four-thread JIT execution completed"); set_text(details, ds, "{\"threads\":4,\"iterations_per_thread\":1000,\"failures\":%d,\"backend\":%d,\"writer_thread_transition\":%s}", failures, backend, writer.failures ? "false" : "true"); return failures ? EIO : 0;
 #endif
 }
 

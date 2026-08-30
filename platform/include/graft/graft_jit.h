@@ -38,6 +38,7 @@ const char *graft_jit_status_name(graft_jit_status status);
 
 int graft_jit_alloc(size_t size, graft_jit_region *out_region);
 int graft_jit_begin_write(graft_jit_region *region);
+int graft_jit_write(graft_jit_region *region, size_t offset, const void *data, size_t size);
 /* Make the current contents executable. This is the backend-neutral commit
  * operation; it may be a no-op for dual-mapped or translator-backed JITs. */
 int graft_jit_commit(graft_jit_region *region);
