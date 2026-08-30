@@ -22,6 +22,25 @@ struct ContentView: View {
                     if store.results.isEmpty { ContentUnavailableView("No results", systemImage: "waveform.path.ecg", description: Text("Run a probe to collect device evidence.")) }
                     ForEach(store.results) { result in ProbeRow(result: result) { store.run(name: result.name) } }
                 }
+                if let reportURL = store.lastExportURL {
+                    Section("Latest Report") {
+                        VStack(alignment: .leading) {
+                            Label("Exported JSON", systemImage: "doc.text")
+                                .font(.headline)
+                            Text(reportURL.path)
+                                .font(.footnote.monospaced())
+                                .foregroundStyle(.secondary)
+                                .textSelection(.enabled)
+                                .fixedSize(horizontal: false, vertical: true)
+                                .accessibilityLabel("Exported report file path")
+                                .accessibilityValue(reportURL.path)
+                        }
+                        ShareLink(item: reportURL) {
+                            Label("Share Exported Report", systemImage: "square.and.arrow.up")
+                        }
+                        .accessibilityHint("Opens the system share sheet for the exported JSON report")
+                    }
+                }
                 Section("Diagnostics") {
                     Text(store.logText).font(.system(.footnote, design: .monospaced)).textSelection(.enabled)
                 }
