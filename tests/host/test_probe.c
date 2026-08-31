@@ -53,6 +53,7 @@ static void collect(const graft_probe_result *result, void *context) {
     if (strcmp(result->name, "jit_multithread") == 0 && result->status == GRAFT_PROBE_PASS) {
         assert(strstr(result->details_json, "\"writer_thread_transition\":true") != NULL);
         assert(strstr(result->details_json, "\"backend\":") != NULL);
+        assert(strstr(result->details_json, "\"stage\":\"complete\"") != NULL);
     }
     if (strcmp(result->name, "runtime_paths") == 0) {
         assert(result->status == GRAFT_PROBE_PASS);

@@ -114,14 +114,6 @@ int graft_lifecycle_note_background(void) {
             errno = e;
             return -1;
         }
-        if (graft_jit_begin_write(&g_lifecycle_code_cache) != 0) {
-            int e = errno;
-            graft_jit_free(&g_lifecycle_code_cache);
-            atomic_store_explicit(&g_lifecycle_prepare_error, e, memory_order_release);
-            atomic_store_explicit(&g_lifecycle_background_seen, true, memory_order_release);
-            errno = e;
-            return -1;
-        }
         if (graft_jit_write(&g_lifecycle_code_cache, 0, code, sizeof(code)) != 0 ||
             graft_jit_invalidate(&g_lifecycle_code_cache, 0, sizeof(code)) != 0 ||
             graft_jit_commit(&g_lifecycle_code_cache) != 0) {
@@ -411,10 +403,14 @@ static int jit_multithread(char *summary, size_t ss, char *details, size_t ds) {
     }
     uint32_t code[] = { 0x52800540u, 0xD65F03C0u }; if (graft_jit_write(&region, 0, code, sizeof(code)) != 0) { graft_jit_free(&region); return errno; } graft_jit_invalidate(&region, 0, sizeof(code)); if (graft_jit_commit(&region) != 0) { graft_jit_free(&region); return EACCES; }
     int backend = region.backend;
-    thread_arg writer = {.region = &region}; pthread_t writer_thread; pthread_create(&writer_thread, NULL, jit_writer_thread, &writer); pthread_join(writer_thread, NULL);
-    pthread_t threads[4]; thread_arg args[4] = {{0}}; for (int i = 0; i < 4; ++i) { args[i].region = &region; args[i].expected = 10; pthread_create(&threads[i], NULL, jit_thread, &args[i]); }
-    int failures = 0; for (int i = 0; i < 4; ++i) { pthread_join(threads[i], NULL); failures += args[i].failures; } graft_jit_free(&region);
-    failures += writer.failures; set_text(summary, ss, "Four-thread JIT execution completed"); set_text(details, ds, "{\"threads\":4,\"iterations_per_thread\":1000,\"failures\":%d,\"backend\":%d,\"writer_thread_transition\":%s}", failures, backend, writer.failures ? "false" : "true"); return failures ? EIO : 0;
+    thread_arg writer = {.region = &region}; pthread_t writer_thread;
+    int writer_create = pthread_create(&writer_thread, NULL, jit_writer_thread, &writer);
+    int writer_join = writer_create == 0 ? pthread_join(writer_thread, NULL) : writer_create;
+    if (writer_create || writer_join) { int e = writer_create ? writer_create : writer_join; graft_jit_free(&region); set_text(summary, ss, "JIT writer thread failed"); set_text(details, ds, "{\"stage\":\"writer_%s\",\"os_error\":%d}", writer_create ? "create" : "join", e); return e; }
+    pthread_t threads[4]; thread_arg args[4] = {{0}}; bool created[4] = {false}; int thread_errors = 0;
+    for (int i = 0; i < 4; ++i) { args[i].region = &region; args[i].expected = 10; int e = pthread_create(&threads[i], NULL, jit_thread, &args[i]); if (e) { thread_errors = e; args[i].failures = 1; } else created[i] = true; }
+    int failures = 0; for (int i = 0; i < 4; ++i) { if (created[i]) { int e = pthread_join(threads[i], NULL); if (e && !thread_errors) thread_errors = e; } failures += args[i].failures; } graft_jit_free(&region);
+    failures += writer.failures + (thread_errors != 0); set_text(summary, ss, "Four-thread JIT execution completed"); set_text(details, ds, "{\"threads\":4,\"iterations_per_thread\":1000,\"failures\":%d,\"backend\":%d,\"writer_thread_transition\":%s,\"stage\":\"%s\",\"os_error\":%d}", failures, backend, writer.failures || thread_errors ? "false" : "true", thread_errors ? "thread_join" : "complete", thread_errors); return failures ? EIO : 0;
 #endif
 }
 

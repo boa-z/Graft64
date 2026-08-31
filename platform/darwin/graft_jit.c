@@ -6,6 +6,13 @@
 #include <unistd.h>
 #include <string.h>
 
+typedef struct graft_jit_copy_context {
+    graft_jit_region *region;
+    size_t offset;
+    const void *data;
+    size_t size;
+} graft_jit_copy_context;
+
 #if defined(__APPLE__)
 #include <pthread.h>
 #include <TargetConditionals.h>
@@ -14,8 +21,7 @@
 #define MAP_JIT 0x800
 #endif
 
-typedef struct graft_jit_copy_context { graft_jit_region *region; size_t offset; const void *data; size_t size; } graft_jit_copy_context;
-#if defined(__APPLE__) && defined(TARGET_OS_IPHONE)
+#if defined(__APPLE__) && TARGET_OS_IPHONE
 static int graft_jit_copy_callback(void *opaque) {
     graft_jit_copy_context *copy = opaque;
     if (!copy || !copy->region || !copy->region->base || !copy->data || copy->offset > copy->region->size || copy->size > copy->region->size - copy->offset) return EINVAL;
@@ -43,13 +49,18 @@ graft_jit_status graft_jit_check(void) {
     }
 #endif
     graft_jit_region region = {0};
-    if (graft_jit_alloc(4096, &region) == 0) {
+    uint32_t probe_code = 0xD503201Fu;
+    int probe_result = graft_jit_alloc(4096, &region);
+    if (probe_result == 0) probe_result = graft_jit_write(&region, 0, &probe_code, sizeof(probe_code));
+    if (probe_result == 0) probe_result = graft_jit_invalidate(&region, 0, sizeof(probe_code));
+    if (probe_result == 0) {
         int commit_result = graft_jit_commit(&region);
         int commit_error = errno;
         graft_jit_free(&region);
         if (commit_result == 0) return GRAFT_JIT_STATUS_ENABLED;
         errno = commit_error;
     }
+    else { int write_error = errno; graft_jit_free(&region); errno = write_error; }
     switch (errno) {
         case EACCES:
         case EPERM:
@@ -111,6 +122,9 @@ int graft_jit_alloc(size_t size, graft_jit_region *out_region) {
 
 int graft_jit_begin_write(graft_jit_region *region) {
     if (!region || !region->base) { errno = EINVAL; return -1; }
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    if (region->backend == 1) { errno = ENOTSUP; return -1; }
+#endif
 #if defined(__APPLE__) && !TARGET_OS_IPHONE
     pthread_jit_write_protect_np(0);
 #endif
@@ -121,7 +135,11 @@ int graft_jit_write(graft_jit_region *region, size_t offset, const void *data, s
     if (!region || !region->base || !data || offset > region->size || size > region->size - offset) { errno = EINVAL; return -1; }
     graft_jit_copy_context copy = {region, offset, data, size};
 #if defined(__APPLE__) && TARGET_OS_IPHONE
-    if (region->backend == 1) return pthread_jit_write_with_callback_np(graft_jit_copy_callback, &copy);
+    if (region->backend == 1) {
+        int result = pthread_jit_write_with_callback_np(graft_jit_copy_callback, &copy);
+        if (result != 0) { errno = result > 0 ? result : EIO; return -1; }
+        return 0;
+    }
 #else
     (void)copy;
 #endif
@@ -134,6 +152,9 @@ int graft_jit_commit(graft_jit_region *region) {
     if (!region || !region->base) { errno = EINVAL; return -1; }
 #if defined(__APPLE__) && !TARGET_OS_IPHONE
     pthread_jit_write_protect_np(1);
+#endif
+#if defined(__APPLE__) && TARGET_OS_IPHONE
+    if (region->backend == 1) return 0;
 #endif
     return mprotect(region->base, region->size, PROT_READ | PROT_EXEC);
 }

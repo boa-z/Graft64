@@ -37,6 +37,8 @@ graft_jit_status graft_jit_check(void);
 const char *graft_jit_status_name(graft_jit_status status);
 
 int graft_jit_alloc(size_t size, graft_jit_region *out_region);
+/* MAP_JIT on iOS uses graft_jit_write's callback-safe path; begin_write is
+ * intentionally unsupported for that backend and returns ENOTSUP. */
 int graft_jit_begin_write(graft_jit_region *region);
 int graft_jit_write(graft_jit_region *region, size_t offset, const void *data, size_t size);
 /* Make the current contents executable. This is the backend-neutral commit
