@@ -2,10 +2,10 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Graft64 runtime manifest",
   "type": "object",
-  "required": ["schema_version", "stage", "platform", "dependencies", "artifacts", "tests"],
+  "required": ["schema_version", "stage", "platform", "source_lock", "toolchain", "dependencies", "patches", "artifacts", "tests"],
   "properties": {
     "schema_version": { "const": 1 },
-    "stage": { "enum": ["G1", "G2", "G3"] },
+    "stage": { "const": "G1" },
     "platform": {
       "type": "object",
       "required": ["os", "architecture"],
@@ -15,46 +15,185 @@
       },
       "additionalProperties": false
     },
+    "source_lock": {
+      "type": "object",
+      "required": ["schema_version", "stage", "policy"],
+      "properties": {
+        "schema_version": { "const": 1 },
+        "stage": { "const": "GRAFT-0002" },
+        "policy": { "const": "upstream-first" }
+      },
+      "additionalProperties": false
+    },
+    "toolchain": {
+      "type": "object",
+      "required": ["container_base", "architecture", "compiler", "cmake", "ninja", "llvm_mingw"],
+      "properties": {
+        "container_base": { "type": "string", "minLength": 1 },
+        "architecture": { "const": "linux/arm64" },
+        "compiler": { "type": "string", "minLength": 1 },
+        "cmake": { "type": "string", "minLength": 1 },
+        "ninja": { "type": "string", "minLength": 1 },
+        "llvm_mingw": {
+          "type": "object",
+          "required": ["version", "archive", "archive_sha256"],
+          "properties": {
+            "version": { "type": "string", "minLength": 1 },
+            "archive": { "type": "string", "minLength": 1 },
+            "archive_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
     "dependencies": {
+      "type": "array",
+      "minItems": 2,
+      "items": {
+        "type": "object",
+        "required": ["name", "repository", "ref", "commit", "archive", "archive_sha256", "license", "role"],
+        "properties": {
+          "name": { "enum": ["wine", "fex"] },
+          "repository": { "type": "string", "minLength": 1 },
+          "ref": { "type": "string", "minLength": 1 },
+          "commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+          "archive": { "type": "string", "minLength": 1 },
+          "archive_sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "license": { "type": "string", "minLength": 1 },
+          "role": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "const": "wine" } }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": ["name"],
+            "properties": { "name": { "const": "fex" } }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ]
+    },
+    "patches": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["name", "ref", "commit", "archive_sha256"],
+        "required": ["dependency", "path", "sha256"],
         "properties": {
-          "name": { "type": "string" },
-          "ref": { "type": "string" },
-          "commit": { "pattern": "^[0-9a-f]{40}$" },
-          "archive_sha256": { "pattern": "^[0-9a-f]{64}$" }
+          "dependency": { "enum": ["wine", "fex"] },
+          "path": { "type": "string", "pattern": "^patches/(wine|fex)/[^/]+\\.patch$" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
         },
+        "allOf": [
+          {
+            "if": {
+              "required": ["dependency"],
+              "properties": { "dependency": { "const": "wine" } }
+            },
+            "then": { "properties": { "path": { "pattern": "^patches/wine/" } } }
+          },
+          {
+            "if": {
+              "required": ["dependency"],
+              "properties": { "dependency": { "const": "fex" } }
+            },
+            "then": { "properties": { "path": { "pattern": "^patches/fex/" } } }
+          }
+        ],
         "additionalProperties": false
       }
     },
     "artifacts": {
       "type": "array",
+      "minItems": 3,
       "items": {
         "type": "object",
-        "required": ["path", "sha256", "role"],
+        "required": ["path", "sha256", "role", "kind", "link_target"],
         "properties": {
-          "path": { "type": "string" },
-          "sha256": { "pattern": "^[0-9a-f]{64}$" },
-          "role": { "type": "string" }
+          "path": { "type": "string", "pattern": "^root/(?!/)(?!\\.{1,2}(?:/|$))(?!.*?/\\.{1,2}(?:/|$))(?!.*//)[^\\\\]*[^/\\\\]$" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" },
+          "role": { "enum": ["wine-loader", "fex-arm64ec-module", "fex-wow64-module", "runtime-file"] },
+          "kind": { "enum": ["file", "symlink"] },
+          "link_target": {}
         },
+        "allOf": [
+          {
+            "if": {
+              "required": ["kind"],
+              "properties": { "kind": { "const": "file" } }
+            },
+            "then": { "properties": { "link_target": { "type": "null" } } }
+          },
+          {
+            "if": {
+              "required": ["kind"],
+              "properties": { "kind": { "const": "symlink" } }
+            },
+            "then": {
+              "properties": {
+                "link_target": { "type": "string", "minLength": 1, "pattern": "^(?!/).+$" }
+              }
+            }
+          }
+        ],
         "additionalProperties": false
-      }
+      },
+      "allOf": [
+        {
+          "contains": {
+            "type": "object",
+            "required": ["role"],
+            "properties": { "role": { "const": "wine-loader" } }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": ["role"],
+            "properties": { "role": { "const": "fex-arm64ec-module" } }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        },
+        {
+          "contains": {
+            "type": "object",
+            "required": ["role"],
+            "properties": { "role": { "const": "fex-wow64-module" } }
+          },
+          "minContains": 1,
+          "maxContains": 1
+        }
+      ]
     },
     "tests": {
       "type": "array",
       "items": {
         "type": "object",
-        "required": ["name", "status", "log"],
+        "required": ["name", "status", "log", "sha256"],
         "properties": {
-          "name": { "type": "string" },
+          "name": { "type": "string", "minLength": 1 },
           "status": { "enum": ["PASS", "FAIL", "BLOCKED", "UNVERIFIED"] },
-          "log": { "type": "string" }
+          "log": { "type": "string", "pattern": "^(?!/)(?!\\.{1,2}(?:/|$))(?!.*?/\\.{1,2}(?:/|$))(?!.*//)[^\\\\]*[^/\\\\]$" },
+          "sha256": { "type": "string", "pattern": "^[0-9a-f]{64}$" }
         },
         "additionalProperties": false
       }
     }
   },
-  "additionalProperties": true
+  "additionalProperties": false
 }

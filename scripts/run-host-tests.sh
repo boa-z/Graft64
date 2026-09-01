@@ -12,4 +12,7 @@ clang -std=c11 -Wall -Wextra -Werror -I"$ROOT/platform/include" \
 clang -std=c11 -Wall -Wextra -Werror -dynamiclib "$ROOT/probes/dylib/GraftProbeTest.c" -o "$OUT/GraftProbeTest.dylib"
 "$OUT/test_probe" "$OUT/GraftProbeHelper" "$OUT/GraftProbeTest.dylib"
 python3 "$ROOT/tests/host/test_report_schema.py"
+python3 "$ROOT/tests/host/test_apply_patches.py"
+python3 "$ROOT/tests/host/test_runtime_output_guard.py"
+python3 "$ROOT/tests/host/test_runtime_manifest.py"
 for script in "$ROOT"/scripts/*.sh; do shellcheck "$script"; done

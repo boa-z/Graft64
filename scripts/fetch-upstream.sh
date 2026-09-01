@@ -6,12 +6,20 @@ LOCK="${GRAFT_DEPS_LOCK:-$ROOT/third_party/manifest/deps.lock}"
 OUT="${GRAFT_UPSTREAM_DIR:-$ROOT/out/upstream}"
 DOWNLOADS="$OUT/downloads"
 
-for tool in curl shasum tar python3; do
+for tool in curl tar python3; do
   command -v "$tool" >/dev/null 2>&1 || {
     echo "required tool not found: $tool" >&2
     exit 1
   }
 done
+if command -v shasum >/dev/null 2>&1; then
+  SHA256_COMMAND=(shasum -a 256)
+elif command -v sha256sum >/dev/null 2>&1; then
+  SHA256_COMMAND=(sha256sum)
+else
+  echo "required SHA-256 tool not found: install shasum or sha256sum" >&2
+  exit 1
+fi
 test -f "$LOCK" || { echo "missing dependency lock: $LOCK" >&2; exit 1; }
 
 mkdir -p "$DOWNLOADS"
@@ -55,7 +63,7 @@ for record in "${DEPS[@]}"; do
   if [[ ! -f "$archive_file" ]]; then
     curl --fail --location --silent --show-error --retry 3 "$archive" --output "$archive_file"
   fi
-  actual_sha="$(shasum -a 256 "$archive_file" | awk '{print $1}')"
+  actual_sha="$("${SHA256_COMMAND[@]}" "$archive_file" | awk '{print $1}')"
   [[ "$actual_sha" == "$expected_sha" ]] || {
     echo "$name archive hash mismatch: expected $expected_sha, got $actual_sha" >&2
     exit 1

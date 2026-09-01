@@ -15,11 +15,20 @@ test -x "$PREFIX/bin/wine" || die "Wine runtime missing: run scripts/build-runti
 for tool in aarch64-w64-mingw32-clang x86_64-w64-mingw32-clang; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool not found in PATH"
 done
+if command -v shasum >/dev/null 2>&1; then
+  SHA256_COMMAND=(shasum -a 256)
+elif command -v sha256sum >/dev/null 2>&1; then
+  SHA256_COMMAND=(sha256sum)
+else
+  die "required SHA-256 tool not found: install shasum or sha256sum"
+fi
 
 mkdir -p "$SAMPLES" "$LOGS"
 aarch64-w64-mingw32-clang -O2 "$ROOT/samples/windows-arm64/hello-arm64.c" -o "$SAMPLES/hello-arm64.exe"
 x86_64-w64-mingw32-clang -O2 "$ROOT/samples/windows-amd64/hello-amd64.c" -o "$SAMPLES/hello-amd64.exe"
-shasum -a 256 "$SAMPLES/hello-arm64.exe" "$SAMPLES/hello-amd64.exe" > "$SAMPLES/sample-manifest.sha256"
+"${SHA256_COMMAND[@]}" \
+  "$SAMPLES/hello-arm64.exe" \
+  "$SAMPLES/hello-amd64.exe" > "$SAMPLES/sample-manifest.sha256"
 
 WINEPREFIX="$RUNTIME/prefix"
 mkdir -p "$WINEPREFIX"
