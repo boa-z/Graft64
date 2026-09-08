@@ -38,6 +38,7 @@ inputs = [
     ("containers/runtime-builder/Dockerfile", root / "containers/runtime-builder/Dockerfile"),
     ("scripts/fetch-upstream.sh", root / "scripts/fetch-upstream.sh"),
     ("scripts/apply-patches.sh", root / "scripts/apply-patches.sh"),
+    ("scripts/prepare-fex-submodules.sh", root / "scripts/prepare-fex-submodules.sh"),
     ("scripts/build-runtime-linux-arm64.sh", root / "scripts/build-runtime-linux-arm64.sh"),
 ]
 patches_root = patch_root / "patches"
@@ -187,6 +188,9 @@ while IFS=$'\t' read -r dependency commit _archive prepared_source extra; do
 done < "$prepared_sources"
 test -n "$WINE_SOURCE" || die "prepared Wine source not found"
 test -n "$FEX_SOURCE" || die "prepared FEX source not found"
+
+GRAFT_UPSTREAM_DIR="$UPSTREAM" bash "$ROOT/scripts/prepare-fex-submodules.sh" \
+  "$FEX_SOURCE" "${FEX_SOURCE##*/fex-}" 2>&1 | tee "$OUT/logs/fex-submodules.log"
 
 WINE_BUILD="$OUT/build/wine"
 mkdir -p "$WINE_BUILD"
