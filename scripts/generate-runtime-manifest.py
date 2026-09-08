@@ -484,6 +484,10 @@ def validate_arm64ec_metadata(path: Path, owner: str, optional: bytes, sections:
     if len(optional) < 200 or struct.unpack_from("<I", optional, 108)[0] <= 10:
         raise ValueError(f"{owner} lacks the ARM64EC load-config directory")
     image = path.read_bytes()
+    section_alignment = struct.unpack_from("<I", optional, 32)[0]
+    image_size = struct.unpack_from("<I", optional, 56)[0]
+    if not section_alignment or section_alignment & (section_alignment - 1) or not image_size:
+        raise ValueError(f"{owner} has invalid ARM64EC image alignment/size")
 
     def mapped(rva: int, size: int, executable: bool = False) -> int:
         matches = []
@@ -516,13 +520,33 @@ def validate_arm64ec_metadata(path: Path, owner: str, optional: bytes, sections:
     if version == 2:
         mapped(metadata_va - image_base, 92)
     table = mapped(code_map, count * 8)
+    executable_spans = []
+    for section in sections:
+        virtual_size, start, raw_size, _ = struct.unpack_from("<IIII", section, 8)
+        if struct.unpack_from("<I", section, 36)[0] & 0x20000000:
+            end = start + max(virtual_size, raw_size)
+            executable_spans.append((start, (end + section_alignment - 1) & ~(section_alignment - 1)))
     has_arm64ec = False
     for index in range(count):
         start, length = struct.unpack_from("<II", image, table + index * 8)
         code_type = start & 3
         if code_type == 3:
             raise ValueError(f"{owner} has an invalid ARM64EC code range type")
-        mapped(start & ~3, length, executable=True)
+        start &= ~3
+        end = start + length
+        if length == 0 or end > image_size:
+            raise ValueError(f"{owner} has an invalid ARM64EC code range extent")
+        # LLD coalesces code ranges across section-alignment padding (e.g.
+        # .text into .hexpthk). Endpoints must be backed by executable bytes;
+        # the whole interval must stay within contiguous executable mappings.
+        mapped(start, 1, executable=True)
+        mapped(end - 1, 1, executable=True)
+        cursor = start
+        for span_start, span_end in sorted(executable_spans):
+            if span_start <= cursor < span_end:
+                cursor = max(cursor, span_end)
+        if cursor < end:
+            raise ValueError(f"{owner} has an ARM64EC range crossing a non-executable mapping")
         has_arm64ec = has_arm64ec or code_type == 1
     if not has_arm64ec:
         raise ValueError(f"{owner} has no ARM64EC code ranges")

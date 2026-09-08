@@ -98,12 +98,12 @@ def write_elf64_aarch64(path, machine=183):
     os.chmod(path, 0o755)
 
 
-def write_pe(path, machine, arm64ec=False):
-    image = bytearray(0x600)
+def write_pe(path, machine, arm64ec=False, split_range=False):
+    image = bytearray(0x610 if split_range else 0x600)
     image[0:2] = b"MZ"
     struct.pack_into("<I", image, 0x3C, 0x80)
     image[0x80:0x84] = b"PE\0\0"
-    struct.pack_into("<HHIIIHH", image, 0x84, machine, 1, 0, 0, 0, 0xF0, 0x2022)
+    struct.pack_into("<HHIIIHH", image, 0x84, machine, 2 if split_range else 1, 0, 0, 0, 0xF0, 0x2022)
     struct.pack_into("<H", image, 0x98, 0x20B)
     section_offset = 0x98 + 0xF0
     image[section_offset : section_offset + 8] = b".text\0\0\0"
@@ -111,12 +111,19 @@ def write_pe(path, machine, arm64ec=False):
     struct.pack_into("<I", image, section_offset + 36, 0x60000020)
     if arm64ec:
         struct.pack_into("<Q", image, 0x98 + 24, 0x180000000)
+        struct.pack_into("<I", image, 0x98 + 32, 0x1000)
+        struct.pack_into("<I", image, 0x98 + 56, 0x3000 if split_range else 0x2000)
         struct.pack_into("<I", image, 0x98 + 108, 16)
         struct.pack_into("<II", image, 0x98 + 192, 0x1000, 208)
         struct.pack_into("<I", image, 0x200, 208)
         struct.pack_into("<Q", image, 0x200 + 200, 0x180001100)
         struct.pack_into("<III", image, 0x300, 2, 0x1180, 1)
-        struct.pack_into("<II", image, 0x380, 0x1201, 0x10)
+        struct.pack_into("<II", image, 0x380, 0x1201, 0xE10 if split_range else 0x10)
+    if split_range:
+        second = section_offset + 40
+        image[second:second + 8] = b".thunks\0"
+        struct.pack_into("<IIII", image, second + 8, 0x10, 0x2000, 0x10, 0x600)
+        struct.pack_into("<I", image, second + 36, 0x60000020)
     path.write_bytes(image)
 
 
@@ -422,6 +429,17 @@ with tempfile.TemporaryDirectory(prefix="graft64-runtime-manifest-") as temporar
         run(generate, environment=environment)
 
     original = arm64ec.read_bytes()
+    write_pe(arm64ec, 0x8664, arm64ec=True, split_range=True)
+    run(generate, environment=environment)
+    run(verify, environment=environment)
+    gap = bytearray(arm64ec.read_bytes())
+    struct.pack_into("<I", gap, 0x98 + 0xF0 + 40 + 12, 0x3000)
+    struct.pack_into("<I", gap, 0x98 + 56, 0x4000)
+    struct.pack_into("<I", gap, 0x384, 0x1E10)
+    arm64ec.write_bytes(gap)
+    expect_generation_and_verification_failure(generate, verify, environment=environment)
+    arm64ec.write_bytes(original)
+    run(generate, environment=environment)
     for offset, fmt, value in (
         (0x200 + 200, "<Q", 0),  # absent CHPE pointer
         (0x200 + 200, "<Q", 0x180FFFFFF),  # unmapped metadata
