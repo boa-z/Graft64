@@ -50,4 +50,6 @@ jobs:
             out/runtime-linux-arm64/logs/
             out/runtime-linux-arm64/*manifest*
             out/runtime-linux-arm64/build/wine/config.log
+            out/runtime-linux-arm64/root/lib/wine/aarch64-windows/libarm64ecfex.dll
+            out/runtime-linux-arm64/root/lib/wine/aarch64-windows/libwow64fex.dll
           if-no-files-found: warn

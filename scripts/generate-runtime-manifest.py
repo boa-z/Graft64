@@ -441,7 +441,10 @@ def validate_pe_machine(path: Path, owner: str, expected_machine: int) -> None:
         optional_header_size,
         _characteristics,
     ) = struct.unpack_from("<HHIIIHH", pe_header, 4)
-    if machine != expected_machine:
+    # ARM64EC final images use AMD64 in the COFF header; 0xA641 identifies
+    # intermediate objects, not linked DLLs. Require CHPE metadata below.
+    disk_machine = 0x8664 if expected_machine == 0xA641 else expected_machine
+    if machine != disk_machine:
         raise ValueError(
             f"{owner} has PE machine 0x{machine:04x}; expected 0x{expected_machine:04x}"
         )
@@ -455,10 +458,11 @@ def validate_pe_machine(path: Path, owner: str, expected_machine: int) -> None:
         raise ValueError(f"{owner} has an invalid PE section table")
     with path.open("rb") as stream:
         stream.seek(optional_offset)
-        optional_magic = stream.read(2)
-        if optional_magic != b"\x0b\x02":
+        optional_header = stream.read(optional_header_size)
+        if optional_header[:2] != b"\x0b\x02":
             raise ValueError(f"{owner} must use the PE32+ optional header")
         stream.seek(section_offset)
+        sections = []
         for _ in range(section_count):
             section = stream.read(40)
             if len(section) != 40:
@@ -466,6 +470,62 @@ def validate_pe_machine(path: Path, owner: str, expected_machine: int) -> None:
             raw_size, raw_offset = struct.unpack_from("<II", section, 16)
             if raw_size and (raw_offset < section_offset + section_count * 40 or raw_offset + raw_size > file_size):
                 raise ValueError(f"{owner} has an invalid PE section payload")
+            sections.append(section)
+    if expected_machine == 0xA641:
+        validate_arm64ec_metadata(path, owner, optional_header, sections)
+
+
+def validate_arm64ec_metadata(path: Path, owner: str, optional: bytes, sections: list[bytes]) -> None:
+    """Validate AMD64+CHPE, including file-backed ARM64EC executable ranges.
+
+    Layouts: LLVM 22 Object/COFF.h (coff_load_configuration64/chpe_metadata),
+    and Microsoft's ARM64EC final-image identification documentation.
+    """
+    if len(optional) < 200 or struct.unpack_from("<I", optional, 108)[0] <= 10:
+        raise ValueError(f"{owner} lacks the ARM64EC load-config directory")
+    image = path.read_bytes()
+
+    def mapped(rva: int, size: int, executable: bool = False) -> int:
+        matches = []
+        for section in sections:
+            virtual_size, start, raw_size, raw_offset = struct.unpack_from("<IIII", section, 8)
+            flags = struct.unpack_from("<I", section, 36)[0]
+            delta = rva - start
+            if size > 0 and delta >= 0 and delta + size <= min(virtual_size, raw_size):
+                if not executable or flags & 0x20000000:
+                    matches.append(raw_offset + delta)
+        if len(matches) != 1:
+            raise ValueError(f"{owner} has an invalid ARM64EC metadata/code RVA")
+        return matches[0]
+
+    config_rva, config_size = struct.unpack_from("<II", optional, 192)
+    if config_size < 208:
+        raise ValueError(f"{owner} has a truncated ARM64EC load configuration")
+    config = mapped(config_rva, config_size)
+    declared_size = struct.unpack_from("<I", image, config)[0]
+    if declared_size < 208 or declared_size > config_size:
+        raise ValueError(f"{owner} has an invalid ARM64EC load-config size")
+    image_base = struct.unpack_from("<Q", optional, 24)[0]
+    metadata_va = struct.unpack_from("<Q", image, config + 200)[0]
+    if metadata_va <= image_base:
+        raise ValueError(f"{owner} lacks an ARM64EC CHPE metadata pointer")
+    metadata = mapped(metadata_va - image_base, 80)
+    version, code_map, count = struct.unpack_from("<III", image, metadata)
+    if version not in (1, 2) or count == 0 or count > len(image) // 8:
+        raise ValueError(f"{owner} has invalid ARM64EC CHPE metadata")
+    if version == 2:
+        mapped(metadata_va - image_base, 92)
+    table = mapped(code_map, count * 8)
+    has_arm64ec = False
+    for index in range(count):
+        start, length = struct.unpack_from("<II", image, table + index * 8)
+        code_type = start & 3
+        if code_type == 3:
+            raise ValueError(f"{owner} has an invalid ARM64EC code range type")
+        mapped(start & ~3, length, executable=True)
+        has_arm64ec = has_arm64ec or code_type == 1
+    if not has_arm64ec:
+        raise ValueError(f"{owner} has no ARM64EC code ranges")
 
 
 def validate_required_artifacts(

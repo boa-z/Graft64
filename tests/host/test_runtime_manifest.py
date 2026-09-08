@@ -98,8 +98,8 @@ def write_elf64_aarch64(path, machine=183):
     os.chmod(path, 0o755)
 
 
-def write_pe(path, machine):
-    image = bytearray(0x210)
+def write_pe(path, machine, arm64ec=False):
+    image = bytearray(0x600)
     image[0:2] = b"MZ"
     struct.pack_into("<I", image, 0x3C, 0x80)
     image[0x80:0x84] = b"PE\0\0"
@@ -107,8 +107,16 @@ def write_pe(path, machine):
     struct.pack_into("<H", image, 0x98, 0x20B)
     section_offset = 0x98 + 0xF0
     image[section_offset : section_offset + 8] = b".text\0\0\0"
-    struct.pack_into("<IIII", image, section_offset + 8, 0x10, 0x1000, 0x10, 0x200)
+    struct.pack_into("<IIII", image, section_offset + 8, 0x400, 0x1000, 0x400, 0x200)
     struct.pack_into("<I", image, section_offset + 36, 0x60000020)
+    if arm64ec:
+        struct.pack_into("<Q", image, 0x98 + 24, 0x180000000)
+        struct.pack_into("<I", image, 0x98 + 108, 16)
+        struct.pack_into("<II", image, 0x98 + 192, 0x1000, 208)
+        struct.pack_into("<I", image, 0x200, 208)
+        struct.pack_into("<Q", image, 0x200 + 200, 0x180001100)
+        struct.pack_into("<III", image, 0x300, 2, 0x1180, 1)
+        struct.pack_into("<II", image, 0x380, 0x1201, 0x10)
     path.write_bytes(image)
 
 
@@ -210,7 +218,7 @@ with tempfile.TemporaryDirectory(prefix="graft64-runtime-manifest-") as temporar
     for path in (wine, arm64ec, wow64):
         path.parent.mkdir(parents=True, exist_ok=True)
     write_elf64_aarch64(wine)
-    write_pe(arm64ec, 0xA641)
+    write_pe(arm64ec, 0x8664, arm64ec=True)
     write_pe(wow64, 0xAA64)
 
     alias = runtime / "root" / "lib" / "wine" / "current-arm64ec.dll"
@@ -398,6 +406,8 @@ with tempfile.TemporaryDirectory(prefix="graft64-runtime-manifest-") as temporar
     wrong_machine_fixtures = (
         (wine, lambda: write_elf64_aarch64(wine, machine=62)),
         (arm64ec, lambda: write_pe(arm64ec, 0xAA64)),
+        (arm64ec, lambda: write_pe(arm64ec, 0xA641)),
+        (arm64ec, lambda: write_pe(arm64ec, 0x8664)),
         (wow64, lambda: write_pe(wow64, 0x8664)),
     )
     for path, write_wrong_machine in wrong_machine_fixtures:
@@ -409,6 +419,24 @@ with tempfile.TemporaryDirectory(prefix="graft64-runtime-manifest-") as temporar
         path.write_bytes(original)
         if path == wine:
             os.chmod(path, 0o755)
+        run(generate, environment=environment)
+
+    original = arm64ec.read_bytes()
+    for offset, fmt, value in (
+        (0x200 + 200, "<Q", 0),  # absent CHPE pointer
+        (0x200 + 200, "<Q", 0x180FFFFFF),  # unmapped metadata
+        (0x300, "<I", 0),  # unsupported metadata version
+        (0x308, "<I", 0),  # empty code map
+        (0x308, "<I", 0xFFFFFFFF),  # oversized code map
+        (0x380, "<I", 0x1202),  # AMD64-only code, not ARM64EC
+        (0x384, "<I", 0xFFFFFFFF),  # code extends beyond payload
+        (0x98 + 0xF0 + 36, "<I", 0x40000040),  # no executable code
+    ):
+        malformed = bytearray(original)
+        struct.pack_into(fmt, malformed, offset, value)
+        arm64ec.write_bytes(malformed)
+        expect_generation_and_verification_failure(generate, verify, environment=environment)
+        arm64ec.write_bytes(original)
         run(generate, environment=environment)
 
     os.chmod(wine, 0o644)
