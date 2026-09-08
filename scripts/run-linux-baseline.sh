@@ -12,7 +12,7 @@ die() { echo "run-linux-baseline: $*" >&2; exit 1; }
   die "G1 baseline must run on a native Linux arm64 host"
 test -x "$PREFIX/bin/wine" || die "Wine runtime missing: run scripts/build-runtime-linux-arm64.sh first"
 
-for tool in timeout aarch64-w64-mingw32-clang x86_64-w64-mingw32-clang; do
+for tool in timeout python3 aarch64-w64-mingw32-clang x86_64-w64-mingw32-clang; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool not found in PATH"
 done
 if command -v shasum >/dev/null 2>&1; then
@@ -24,6 +24,10 @@ else
 fi
 
 mkdir -p "$SAMPLES" "$LOGS"
+# A failed retry must not leave a previous successful test report behind.
+rm -f -- "$RUNTIME/g1-baseline-tests.json"
+python3 "$ROOT/scripts/generate-runtime-manifest.py" "$RUNTIME" \
+  --lock "$ROOT/third_party/manifest/deps.lock"
 aarch64-w64-mingw32-clang -O2 "$ROOT/samples/windows-arm64/hello-arm64.c" -o "$SAMPLES/hello-arm64.exe"
 x86_64-w64-mingw32-clang -O2 "$ROOT/samples/windows-amd64/hello-amd64.c" -o "$SAMPLES/hello-amd64.exe"
 "${SHA256_COMMAND[@]}" \
@@ -41,11 +45,21 @@ run_sample() {
   local status=$?
   set -e
   [[ "$status" -eq 0 ]] || die "$name exited with $status; see $output"
-  grep -Fqx "$expected" "$output" || die "$name output did not contain expected marker; see $output"
+  # Preserve raw logs; accept only an exact LF or Windows CRLF marker line.
+  grep -Fxq -e "$expected" -e "$expected"$'\r' "$output" || \
+    die "$name output did not contain expected marker; see $output"
   printf '%s\n' "PASS $name"
 }
 
 run_sample hello-arm64 GRAFT64_HELLO_ARM64
+# Wine 11's ntdll/loader.c reads this default value; installing FEX alone does
+# not replace the default xtajit64 module. Configure only our generated prefix.
+fex_module="$PREFIX/lib/wine/aarch64-windows/libarm64ecfex.dll"
+test -f "$fex_module" || die "installed ARM64EC FEX module missing: $fex_module"
+cp "$fex_module" "$WINEPREFIX/drive_c/windows/system32/libarm64ecfex.dll"
+WINEPREFIX="$WINEPREFIX" WINEDEBUG=-all timeout --kill-after=10s 120s \
+  "$PREFIX/bin/wine" reg add 'HKLM\Software\Microsoft\Wow64\amd64' \
+  /ve /t REG_SZ /d libarm64ecfex.dll /f > "$LOGS/fex-register.log" 2>&1
 run_sample hello-amd64 GRAFT64_HELLO_AMD64
 python3 - "$RUNTIME/g1-baseline-tests.json" <<'PY'
 import json

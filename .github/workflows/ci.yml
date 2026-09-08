@@ -17,6 +17,7 @@ jobs:
       - run: python3 tests/host/test_apply_patches.py
       - run: python3 tests/host/test_runtime_output_guard.py
       - run: python3 tests/host/test_runtime_manifest.py
+      - run: python3 tests/host/test_linux_baseline.py
       - run: shellcheck scripts/*.sh
   host:
     runs-on: macos-14
