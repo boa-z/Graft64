@@ -30,5 +30,5 @@ dependencies:
     role: arm64ec-emulator-module
 notes:
   - G0 device feasibility remains a required gate before shipping runtime artifacts.
-  - No private Wine/FEX patches are applied by this baseline.
+  - The locally authored FEX cstdlib portability fix is tracked in patches/fex; no third-party patches are imported.
   - Archive hashes are for the commit-addressed GitHub source archives.

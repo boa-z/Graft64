@@ -192,25 +192,6 @@ test -n "$FEX_SOURCE" || die "prepared FEX source not found"
 GRAFT_UPSTREAM_DIR="$UPSTREAM" bash "$ROOT/scripts/prepare-fex-submodules.sh" \
   "$FEX_SOURCE" "${FEX_SOURCE##*/fex-}" 2>&1 | tee "$OUT/logs/fex-submodules.log"
 
-WINE_BUILD="$OUT/build/wine"
-mkdir -p "$WINE_BUILD"
-pushd "$WINE_BUILD" >/dev/null
-if [[ ! -f config.status ]]; then
-  "$WINE_SOURCE/configure" \
-    --enable-archs=arm64ec,aarch64 \
-    --with-mingw=clang \
-    --disable-tests \
-    --disable-win16 \
-    --without-x \
-    --without-wayland \
-    --without-vulkan \
-    --prefix="$PREFIX" \
-    2>&1 | tee "$OUT/logs/wine-configure.log"
-fi
-make -j"${GRAFT_JOBS:-$(nproc)}" 2>&1 | tee "$OUT/logs/wine-build.log"
-make install 2>&1 | tee "$OUT/logs/wine-install.log"
-popd >/dev/null
-
 build_fex() {
   local build_dir="$1"
   local mingw_triple="$2"
@@ -230,8 +211,29 @@ build_fex() {
   cmake --install "$build_dir" 2>&1 | tee "$OUT/logs/fex-${mingw_triple}-install.log"
 }
 
+# FEX uses its own Windows headers and can fail fast before the larger Wine
+# build; both still install into the same verified runtime root.
 build_fex "$OUT/build/fex-arm64ec" arm64ec-w64-mingw32
 build_fex "$OUT/build/fex-wow64" aarch64-w64-mingw32
+
+WINE_BUILD="$OUT/build/wine"
+mkdir -p "$WINE_BUILD"
+pushd "$WINE_BUILD" >/dev/null
+if [[ ! -f config.status ]]; then
+  "$WINE_SOURCE/configure" \
+    --enable-archs=arm64ec,aarch64 \
+    --with-mingw=clang \
+    --disable-tests \
+    --disable-win16 \
+    --without-x \
+    --without-wayland \
+    --without-vulkan \
+    --prefix="$PREFIX" \
+    2>&1 | tee "$OUT/logs/wine-configure.log"
+fi
+make -j"${GRAFT_JOBS:-$(nproc)}" 2>&1 | tee "$OUT/logs/wine-build.log"
+make install 2>&1 | tee "$OUT/logs/wine-install.log"
+popd >/dev/null
 
 test -x "$PREFIX/bin/wine" || die "Wine install completed without $PREFIX/bin/wine"
 python3 "$ROOT/scripts/generate-runtime-manifest.py" "$OUT" \

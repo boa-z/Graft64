@@ -1,0 +1,23 @@
+From: Graft64 contributors
+Subject: [PATCH] Common: include cstdlib for integer conversions
+
+StringConv.h uses std::strtoll and std::strtoull. Include their defining
+standard header rather than relying on transitive libc++ includes.
+
+Authored locally against the locked FEX-2607 source after native ARM64 CI
+failed with LLVM-MinGW 20260826. No code or patch was copied from another
+project. This changes declarations only, not conversion semantics.
+
+Upstream-Status: Pending (not submitted)
+
+diff --git a/FEXCore/Source/Common/StringConv.h b/FEXCore/Source/Common/StringConv.h
+--- a/FEXCore/Source/Common/StringConv.h
++++ b/FEXCore/Source/Common/StringConv.h
+@@ -3,6 +3,7 @@
+ #include <FEXCore/fextl/string.h>
+ 
+ #include <concepts>
++#include <cstdlib>
+ #include <string_view>
+ 
+ namespace FEXCore::StrConv {
