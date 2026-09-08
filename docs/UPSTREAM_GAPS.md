@@ -55,6 +55,8 @@ lock to 2608 independently would not make the iOS path buildable.
 
 ## FEX ARM64EC integration
 
-The G1 lock pins the upstream FEX release and builds its ARM64EC and AArch64 MinGW modules without local patches. Any missing Wine external-emulator entry point, loader ABI mismatch, or toolchain incompatibility must be recorded here with an upstream issue and a minimal patch proposal before changing `patches/`.
+The lock pins FEX 2607 and builds its ARM64EC/AArch64 MinGW modules plus native Linux UnixLibs. Native CI exposed missing direct standard-header includes with LLVM-MinGW 20260826: `StringConv.h` required `<cstdlib>`, CRT `IO.cpp` required `<cstdarg>`, and CRT `Alloc.cpp` required `<cstdlib>` to retain the C allocator declarations. The three locally authored one-line patches under `patches/fex/` record those fixes; they do not change translation or allocation logic. They are pending upstream submission; no upstream issue or PR has been filed.
 
-G1 may be started only after a real arm64 LiveContainer report demonstrates that the G0 stop conditions are green. No private fork is selected silently.
+LLVM 23's libc++ also introduced `GetACP`/`GetLocaleInfoEx` dependencies that the locked WoW64 CRT could not link. The tested builder instead pins LLVM-MinGW 20260616 (LLVM 22.1.8), without adding API stubs or a kernel32 dependency to the emulator. [Linux baseline evidence](LINUX_BASELINE.md) records the successful native run and its limits.
+
+The user-authorized Linux Actions run is preparatory evidence only. G0 remains unverified; it does not authorize iOS runtime integration or establish full G1 acceptance. G0 stop conditions still require an exported real arm64 LiveContainer report. No private fork is selected silently.
