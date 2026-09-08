@@ -33,8 +33,15 @@ jobs:
       - name: Package validated runtime preserving symlinks
         run: |
           sudo tar -czf out/runtime-linux-arm64.tar.gz -C out/runtime-linux-arm64 \
-            root samples logs runtime-manifest.json g1-baseline-tests.json
-          sha256sum out/runtime-linux-arm64.tar.gz > out/runtime-linux-arm64.tar.gz.sha256
+            root samples logs runtime-manifest.json runtime-manifest.sha256 \
+            applied-patches.json build-input.sha256 g1-baseline-tests.json
+          (
+            cd out
+            sha256sum runtime-linux-arm64.tar.gz > runtime-linux-arm64.tar.gz.sha256
+          )
+          verification_dir="$(mktemp -d out/runtime-package-check.XXXXXX)"
+          tar -xzf out/runtime-linux-arm64.tar.gz -C "$verification_dir"
+          ./scripts/verify-artifacts.sh "$verification_dir"
       - uses: actions/upload-artifact@v4
         if: success()
         with:
