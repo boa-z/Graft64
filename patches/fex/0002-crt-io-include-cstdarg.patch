@@ -1,0 +1,21 @@
+From: Graft64 contributors
+Subject: [PATCH] Windows: include cstdarg for CRT variadic functions
+
+IO.cpp uses va_start, va_arg and va_end. Include their defining header
+explicitly for LLVM-MinGW 20260826 rather than relying on transitive includes.
+Authored locally from the native ARM64 CI failure against locked FEX-2607;
+no code or patch was copied from another project. No runtime logic changes.
+
+Upstream-Status: Pending (not submitted)
+
+diff --git a/Source/Windows/Common/CRT/IO.cpp b/Source/Windows/Common/CRT/IO.cpp
+--- a/Source/Windows/Common/CRT/IO.cpp
++++ b/Source/Windows/Common/CRT/IO.cpp
+@@ -10,6 +10,7 @@
+ #include <algorithm>
+ #include <cstdlib>
+ #include <cstdio>
++#include <cstdarg>
+ #include <cstdint>
+ #include <cerrno>
+ #include <io.h>
