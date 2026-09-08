@@ -12,7 +12,7 @@ die() { echo "run-linux-baseline: $*" >&2; exit 1; }
   die "G1 baseline must run on a native Linux arm64 host"
 test -x "$PREFIX/bin/wine" || die "Wine runtime missing: run scripts/build-runtime-linux-arm64.sh first"
 
-for tool in aarch64-w64-mingw32-clang x86_64-w64-mingw32-clang; do
+for tool in timeout aarch64-w64-mingw32-clang x86_64-w64-mingw32-clang; do
   command -v "$tool" >/dev/null 2>&1 || die "$tool not found in PATH"
 done
 if command -v shasum >/dev/null 2>&1; then
@@ -37,7 +37,7 @@ run_sample() {
   local expected="$2"
   local output="$LOGS/$name.log"
   set +e
-  WINEPREFIX="$WINEPREFIX" WINEDEBUG=-all "$PREFIX/bin/wine" "$SAMPLES/$name.exe" >"$output" 2>&1
+  WINEPREFIX="$WINEPREFIX" WINEDEBUG=-all timeout --kill-after=10s 120s "$PREFIX/bin/wine" "$SAMPLES/$name.exe" >"$output" 2>&1
   local status=$?
   set -e
   [[ "$status" -eq 0 ]] || die "$name exited with $status; see $output"

@@ -1,0 +1,53 @@
+name: Linux ARM64 runtime baseline
+on:
+  workflow_dispatch:
+permissions:
+  contents: read
+concurrency:
+  group: linux-arm64-${{ github.ref }}
+  cancel-in-progress: false
+jobs:
+  runtime:
+    runs-on: ubuntu-24.04-arm
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+      - name: Verify native architecture and locked inputs
+        run: |
+          test "$(uname -m)" = aarch64
+          ./scripts/verify-artifacts.sh
+      - name: Build pinned runtime in ARM64 container
+        env:
+          GRAFT_RUNTIME_USE_CONTAINER: '1'
+          GRAFT_RUNTIME_IMAGE: graft64/runtime-builder:ci
+        run: |
+          mkdir -p out/ci
+          set -o pipefail
+          ./scripts/build-runtime-linux-arm64.sh 2>&1 | tee out/ci/build.log
+      - name: Run native ARM64 and translated AMD64 samples
+        run: |
+          set -o pipefail
+          docker run --rm --platform linux/arm64 \
+            -v "$PWD:/workspace" graft64/runtime-builder:ci \
+            /workspace/scripts/run-linux-baseline.sh 2>&1 | tee out/ci/baseline.log
+      - name: Package validated runtime preserving symlinks
+        run: |
+          sudo tar -czf out/runtime-linux-arm64.tar.gz -C out/runtime-linux-arm64 \
+            root samples logs runtime-manifest.json g1-baseline-tests.json
+          sha256sum out/runtime-linux-arm64.tar.gz > out/runtime-linux-arm64.tar.gz.sha256
+      - uses: actions/upload-artifact@v4
+        if: success()
+        with:
+          name: runtime-linux-arm64
+          path: out/runtime-linux-arm64.tar.gz*
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: linux-arm64-diagnostics
+          path: |
+            out/ci/
+            out/runtime-linux-arm64/logs/
+            out/runtime-linux-arm64/*manifest*
+            out/runtime-linux-arm64/build/wine/config.log
+          if-no-files-found: warn

@@ -111,7 +111,7 @@ IFS=$'\t' read -r LLVM_MINGW_URL LLVM_MINGW_SHA256 extra <<< "$container_lock"
 if [[ "${GRAFT_RUNTIME_IN_CONTAINER:-0}" != 1 ]]; then
   host_os="$(uname -s)"
   host_arch="$(uname -m)"
-  if [[ "$host_os" != Linux || "$host_arch" != aarch64 ]]; then
+  if [[ "${GRAFT_RUNTIME_USE_CONTAINER:-0}" == 1 || "$host_os" != Linux || "$host_arch" != aarch64 ]]; then
     if [[ "${GRAFT_RUNTIME_USE_CONTAINER:-0}" == 1 ]] && command -v docker >/dev/null 2>&1; then
       image="${GRAFT_RUNTIME_IMAGE:-graft64/runtime-builder:${BUILD_INPUT_FINGERPRINT:0:16}}"
       if ! docker image inspect "$image" >/dev/null 2>&1; then
