@@ -1,0 +1,25 @@
+From: Graft64 contributors
+Subject: [PATCH] Windows: include allocator declarations before CRT definitions
+
+Alloc.cpp defines the C allocation functions but only includes cstdint and
+indirect headers. With LLVM-MinGW 20260826 these no longer declare the C
+allocation API, leaving C++-linkage definitions and undefined C allocator
+symbols when linking libc++ into the ARM64EC module.
+
+Include cstdlib explicitly after clearing the CRT import annotations. Keep
+all existing rpmalloc function bodies unchanged. Authored locally from the
+native ARM64 CI linker failure; no third-party patch was copied.
+
+Upstream-Status: Pending (not submitted)
+
+diff --git a/Source/Windows/Common/CRT/Alloc.cpp b/Source/Windows/Common/CRT/Alloc.cpp
+--- a/Source/Windows/Common/CRT/Alloc.cpp
++++ b/Source/Windows/Common/CRT/Alloc.cpp
+@@ -2,6 +2,7 @@
+ #define _SECIMP
+ #define _CRTIMP
+ #include <cstdint>
++#include <cstdlib>
+ #include "../Priv.h"
+ #include <rpmalloc/rpmalloc.h>
+ 
