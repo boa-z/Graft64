@@ -4,8 +4,8 @@ RUN apt-get update && DEBIAN_FRONTEND=noninteractive apt-get install -y --no-ins
     autoconf bison build-essential ca-certificates clang cmake curl flex gettext git \
     libasound2-dev libfontconfig1-dev libfreetype6-dev libfuse3-dev libpng-dev \
     libssl-dev ninja-build pkg-config python3 tar xz-utils && rm -rf /var/lib/apt/lists/*
-ARG LLVM_MINGW_URL="https://github.com/mstorsjo/llvm-mingw/releases/download/20260826/llvm-mingw-20260826-ucrt-ubuntu-22.04-aarch64.tar.xz"
-ARG LLVM_MINGW_SHA256="4eb475cccf5e5e37ea3b693a52227e70a86ae70abafceb9ecd83887e67699c9d"
+ARG LLVM_MINGW_URL="https://github.com/mstorsjo/llvm-mingw/releases/download/20260616/llvm-mingw-20260616-ucrt-ubuntu-22.04-aarch64.tar.xz"
+ARG LLVM_MINGW_SHA256="e7e5d135d93d3f2a3beaaea633a5b0e66ac75391a53feae654391913dd76102b"
 RUN set -eux; \
     curl --fail --location --silent --show-error "$LLVM_MINGW_URL" --output /tmp/llvm-mingw.tar.xz; \
     echo "$LLVM_MINGW_SHA256  /tmp/llvm-mingw.tar.xz" | sha256sum --check --status; \

@@ -24,6 +24,8 @@ G1 runs on a native Linux `aarch64` machine or an ARM64 container engine. The de
 ./scripts/verify-artifacts.sh
 ```
 
+The builder pins LLVM-MinGW 20260616 (LLVM 22.1.8). The initially selected LLVM 23 toolchain introduced libc++ locale imports that the locked FEX WoW64 CRT did not provide; the build must not paper over them with stubs. Three locally authored patches explicitly include standard headers used by FEX. Both PE modules and their upstream native Linux UnixLib companions are built before Wine. Only the native CI baseline can establish compatibility for this toolchain combination.
+
 On Apple Silicon with an ARM64 Docker engine, build the pinned builder image and run through Docker:
 
 ```sh

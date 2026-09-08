@@ -216,6 +216,16 @@ build_fex() {
 build_fex "$OUT/build/fex-arm64ec" arm64ec-w64-mingw32
 build_fex "$OUT/build/fex-wow64" aarch64-w64-mingw32
 
+# Match upstream's Wine DLL workflow: the PE modules have companion native
+# Linux UnixLibs. Use the host compiler, not LLVM-MinGW's Windows driver.
+cmake -S "$FEX_SOURCE/Source/Windows/UnixLib" -B "$OUT/build/fex-unixlib" -G Ninja \
+  -DCMAKE_BUILD_TYPE=Release -DCMAKE_CXX_COMPILER=/usr/bin/clang++ \
+  -DCMAKE_INSTALL_PREFIX="$PREFIX" -DCMAKE_INSTALL_LIBDIR=lib/wine/aarch64-unix \
+  2>&1 | tee "$OUT/logs/fex-unixlib-configure.log"
+cmake --build "$OUT/build/fex-unixlib" --parallel "${GRAFT_JOBS:-$(nproc)}" \
+  2>&1 | tee "$OUT/logs/fex-unixlib-build.log"
+cmake --install "$OUT/build/fex-unixlib" 2>&1 | tee "$OUT/logs/fex-unixlib-install.log"
+
 WINE_BUILD="$OUT/build/wine"
 mkdir -p "$WINE_BUILD"
 pushd "$WINE_BUILD" >/dev/null
